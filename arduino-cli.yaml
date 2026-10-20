@@ -1,0 +1,7 @@
+board_manager:
+  additional_urls:
+    - https://espressif.github.io/arduino-esp32/package_esp32_index.json
+directories:
+  data: /Users/erickmob/code/gh/personalRepos/esp32/arduino-data
+  downloads: /Users/erickmob/code/gh/personalRepos/esp32/arduino-data/staging
+  user: /Users/erickmob/code/gh/personalRepos/esp32/arduino

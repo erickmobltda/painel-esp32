@@ -1,0 +1,8 @@
+vendor/
+build/
+backup/
+secrets.h
+**/secrets.h
+.DS_Store
+arduino-data/
+arduino/libraries/
