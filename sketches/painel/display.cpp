@@ -42,11 +42,32 @@ static void mapTouch(int16_t &x, int16_t &y) {
 #endif
 }
 
+static volatile uint32_t lastTouch = 0;
+static bool sleeping = false, swallow = false;
+
 uint8_t displayReadTouch(int16_t *x, int16_t *y, uint8_t max) {
   uint8_t n = touch.getPoint(x, y, max);
   if (n > max) n = max;
+  if (n) lastTouch = millis();
+  if (n && sleeping) swallow = true;  // o toque que acorda não vale como clique
+  if (swallow) {
+    if (n == 0) swallow = false;
+    return 0;
+  }
   for (uint8_t i = 0; i < n; i++) mapTouch(x[i], y[i]);
   return n;
+}
+
+uint32_t displayLastTouch() {
+  return lastTouch;
+}
+
+void displaySetSleeping(bool s) {
+  sleeping = s;
+}
+
+void displaySetBrightness(uint8_t level) {
+  ledcWrite(PIN_LCD_BL, level);
 }
 
 void displaySetAmplifier(bool on) {
@@ -92,8 +113,8 @@ bool displayInit() {
     return false;
   }
   gfx->fillScreen(RGB565_BLACK);
-  pinMode(PIN_LCD_BL, OUTPUT);
-  digitalWrite(PIN_LCD_BL, HIGH);
+  ledcAttach(PIN_LCD_BL, 5000, 8);  // PWM para poder escurecer na bateria
+  ledcWrite(PIN_LCD_BL, 255);
 
   if (!touch.begin(Wire, FT6X36_SLAVE_ADDRESS)) {
     Serial.println("[display] touch FT6X36 nao encontrado");

@@ -27,6 +27,7 @@ static TaskHandle_t taskHandle = nullptr;
 static SemaphoreHandle_t stateMutex;  // protege playback, cfg e needsReauth
 static SemaphoreHandle_t httpsMutex;  // uma conexão TLS nova por vez (RAM interna)
 static volatile bool active = false;
+static volatile bool suspended = false;  // tela apagada
 static SpPlayback playback;
 static Config cfg;
 static bool needsReauth = false;
@@ -493,7 +494,7 @@ static void spotifyTask(void *) {
   artHttp.setTimeout(HTTP_TIMEOUT_MS);
 
   for (;;) {
-    if (!active) {
+    if (!active || suspended) {
       // Fora da tela do Spotify: fecha as conexões (libera a RAM do TLS) e dorme até ser acordada
       http.end();
       client.stop();
@@ -572,6 +573,11 @@ void spotifyCommand(SpCmd cmd, uint32_t positionMs) {
   CmdMsg msg = {cmd, positionMs};
   if (xQueueSend(cmdQueue, &msg, 0) != pdTRUE) Serial.println("[spotify] fila de comandos cheia");
   xTaskNotifyGive(taskHandle);
+}
+
+void spotifySetSuspended(bool s) {
+  suspended = s;
+  if (!s && taskHandle) xTaskNotifyGive(taskHandle);
 }
 
 bool spotifyTakeArt(uint16_t *&pixels, int &w, int &h) {

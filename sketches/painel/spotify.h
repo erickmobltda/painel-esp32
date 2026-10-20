@@ -46,6 +46,8 @@ void spotifyBegin();
 // Consulta o player a cada ~1 s só enquanto a tela do Spotify estiver aberta.
 void spotifySetActive(bool active);
 SpPlayback spotifyPlayback();
+// Tela apagada: pausa as consultas sem sair da tela do Spotify (e retoma ao acender).
+void spotifySetSuspended(bool suspended);
 // Relê credenciais da NVS (depois de salvar pela página/script) e sai de NeedsReauth.
 void spotifyReloadConfig();
 bool spotifyNeedsReauth();

@@ -20,7 +20,16 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 - **Etapa 7 concluída (2026-10-20)**: Capitã Maeva portada (gráficos + controles, sem som). ~20 FPS jogando. Usuário confirmou.
 - **Etapa 8 concluída (2026-10-20)**: sons do jogo sintetizados na placa (música + efeitos), mudo no jogo, volume na ⚙.
   Usuário confirmou.
-- Próxima: **Etapa 9** — energia (escurecer/apagar tela na bateria) + robustez (sem Wi-Fi, Spotify fora, nada tocando).
+- **Etapa 9 — código pronto, TESTES DO USUÁRIO PENDENTES (2026-10-20)**: na bateria escurece após 1 min e apaga após 5 min
+  (tempos escolhidos pelo usuário; não escurece durante a partida do jogo; com USB fica sempre acesa). Validado por mim via
+  serial com bateria simulada (`b`): escureceu em 60 s e apagou em 5 min. Falta o usuário confirmar na placa:
+  1) toque na tela apagada só acorda (não clica); 2) roteador desligado → "sem conexão"/"Sem Wi-Fi", sem travar, e
+  reconecta sozinho ao religar; 3) nada tocando → mensagem clara; 4) teste real na bateria (sem USB).
+  A conferir também: RAM ao sair do Spotify (log mostrou 69 KB livres logo na troca; verificar se volta ao normal após
+  alguns segundos, quando a tarefa fecha as conexões TLS).
+- Próximas: terminar testes da 9 → **11** README final (a 10, capa, já foi feita na 5) → **12** desempenho.
+  Itens do checklist ainda sem confirmação do usuário: bateria escurece/apaga/acorda; sem Wi-Fi; script `tools/spotify_auth.py`
+  (renovação do token sem regravar) — o usuário usou só o fluxo pela página da placa.
 - **Etapa 12 (nova, última, pedido do usuário)**: investigar e melhorar desempenho do Spotify (ver "Pendências de desempenho").
 
 ## Estrutura do sketch `sketches/painel`
@@ -79,6 +88,14 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   ⚠️ O SD (CS 15) divide SCK/MOSI/MISO com a tela e o barramento da tela está sem MISO: hoje nada usa o SD.
   Para usar o SD (ex.: cache de capas da etapa 12) será preciso planejar o compartilhamento do barramento.
 - Usuário: as animações da tela de título do jogo podem ser reduzidas se precisar de desempenho.
+
+## Energia — `idle.cpp`
+- Brilho por PWM (`ledcAttach` no pino 25): aceso 255, escurecido 40, apagado 0. USB detectado pelo AXP2101 (a cada 1 s).
+- Atividade = qualquer toque (`displayLastTouch`, inclusive no jogo) ou partida em andamento (`gamePlaying()`).
+- Tela apagada: o `loop()` não desenha (nem LVGL nem jogo), só `netLoop()`; consulta ao Spotify suspensa
+  (`spotifySetSuspended`); música do jogo para. O toque que acorda é engolido até soltar (`displaySetSleeping`).
+- Botão PWR: não é tocado pelo firmware (desligamento por pressão longa continua com o AXP2101).
+- Depuração: `b` pelo serial simula bateria com o USB ligado.
 - Depuração: `g` pelo serial abre o jogo.
 
 ## Som — `sound.cpp`, `es8311.*` (driver oficial copiado do exemplo 04_es8311_example)

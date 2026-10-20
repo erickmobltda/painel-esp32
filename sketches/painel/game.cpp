@@ -1001,6 +1001,7 @@ void gameStart() {
 }
 
 bool gameRunning() { return running; }
+bool gamePlaying() { return running && state == St::Play; }
 
 bool gameFrame() {
   uint32_t now = millis();

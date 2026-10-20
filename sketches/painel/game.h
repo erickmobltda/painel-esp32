@@ -9,5 +9,7 @@ bool gameRunning();
 // Um quadro (lógica + desenho). Devolve false quando o usuário tocou em "voltar":
 // aí o chamador faz gameStop() e mostra a tela inicial.
 bool gameFrame();
+// Partida em andamento (a tela não escurece enquanto a criança joga).
+bool gamePlaying();
 // Libera toda a memória do jogo e religa o Wi-Fi.
 void gameStop();

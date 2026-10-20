@@ -10,6 +10,7 @@
 #include "ui.h"
 #include "game.h"
 #include "sound.h"
+#include "idle.h"
 
 void setup() {
   Serial.begin(115200);
@@ -27,10 +28,16 @@ void setup() {
   spotifyBegin();
   if (netStatus().mode == NetMode::Setup) uiShowWifiSetup();
   else uiShowHome();
+  idleBegin();
   Serial.println("[painel] pronto");
 }
 
 void loop() {
+  if (!idleLoop()) {  // tela apagada: não desenha (só a rede segue funcionando)
+    netLoop();
+    delay(50);
+    return;
+  }
   if (gameRunning()) {
     if (!gameFrame()) {
       gameStop();
@@ -41,7 +48,7 @@ void loop() {
   lv_timer_handler();
   netLoop();
 
-  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela; 'q' busca a fila; 'g' abre o jogo
+  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela; 'q' busca a fila; 'g' abre o jogo; 'b' simula bateria
   if (Serial.available()) {
     char c = Serial.read();
     if (c == 's') {
@@ -53,6 +60,11 @@ void loop() {
       spotifyRequestQueue(true);
     } else if (c == 'g') {
       gameStart();
+    } else if (c == 'b') {
+      static bool battery = false;
+      battery = !battery;
+      Serial.printf("[debug] simular bateria=%d\n", battery);
+      idleSimulateBattery(battery);
     }
   }
   delay(5);
