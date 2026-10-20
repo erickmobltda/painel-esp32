@@ -25,3 +25,7 @@ void netLoop();
 // Não apaga nada: só sobe o ponto de acesso para cadastrar outra rede (a antiga vale até salvar a nova).
 void netStartSetup();
 NetStatus netStatus();
+
+// Desliga o Wi-Fi (jogo: economiza bateria e RAM) e religa depois. No modo Setup não faz nada.
+void netPause();
+void netResume();

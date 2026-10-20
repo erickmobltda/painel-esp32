@@ -16,8 +16,9 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   foi antecipada para cá por decisão do usuário). Usuário confirmou na placa.
 - **Etapa 6 concluída (2026-10-20)**: fila (botão ☰ na tela do Spotify → tela "Fila", até 20 itens, nome + artista,
   rolagem por toque, atualiza a cada 10 s). Usuário confirmou na placa.
-- Próxima: **Etapa 7** — Jogo: resumo do HTML para aprovação. (Tocar uma música da fila ao tocar nela: explicado ao usuário — pular N vezes ou
-  `PUT /play` com contexto+offset — não incluído por ora.)
+- (Tocar uma música da fila ao tocar nela: explicado ao usuário — pular N vezes ou `PUT /play` com contexto+offset — não incluído por ora.)
+- **Etapa 7 concluída (2026-10-20)**: Capitã Maeva portada (gráficos + controles, sem som). ~20 FPS jogando. Usuário confirmou.
+- Próxima: **Etapa 8** — sons do jogo (decidir com o usuário: só efeitos ou também música).
 - **Etapa 12 (nova, última, pedido do usuário)**: investigar e melhorar desempenho do Spotify (ver "Pendências de desempenho").
 
 ## Estrutura do sketch `sketches/painel`
@@ -58,6 +59,25 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   o buffer por `spotifyTakeArt` (contador de versão) e libera ao trocar/fechar. Falha no download → nova tentativa em 10 s.
 - Tarefa `spotify`: pilha 12 KB (mínimo livre ~6,7 KB), núcleo 1, prioridade 0.
 
+## Jogo (Capitã Maeva) — `game.cpp`, `game_atlas.h`
+- Fonte: `/Users/erickmob/code/gh/personalRepos/capita_maeva_game/index.html` (resumo aprovado pelo usuário em 2026-10-20).
+  Port fiel: mesmas constantes (GRAV 1100, JUMP_H 70, PREP/LAND/INV, velocidade 150→230), mesma ordem de funções e nomes.
+- Sprites da Maeva: os 2 atlas PNG embutidos no HTML viram `game_atlas.h` (RGB565, cor-chave 0xF81F, ~420 KB na flash) com
+  `python3 tools/game_assets.py <index.html>` (regerar se o jogo original mudar). O resto (céu, nuvens, morros, chão,
+  obstáculos, abelha, corações, botões, fonte 5x7) é gerado em C++ na entrada do jogo (PSRAM), como no JS.
+- Tela da placa 480x320 vs jogo 480x270: mundo idêntico (1:1); as 50 linhas extras são mais terra, onde ficam os botões.
+- Decisões do usuário: só os dois botões (Pular vermelho à esq., Abaixar azul à dir., 96 px, alvo com +10 px de tolerância)
+  valem durante o jogo; no título/game over, tocar em qualquer lugar começa (como o canvas do original). Casinha no topo
+  (lugar do botão de mudo) volta ao Painel, ao soltar o dedo. Touch lê 2 dedos (segurar Abaixar + tocar Pular funciona).
+- Recorde na NVS (`game_best`). Wi-Fi desligado durante o jogo (`netPause/netResume`). `gameStop()` libera tudo.
+- Desenho: 10 faixas de 480x32 num buffer na RAM interna (30 KB); `render()` é chamado por faixa e as primitivas recortam.
+  Nuvens/morros como "trechos opacos" (memcpy); sprites ampliados uma vez; `#pragma GCC optimize("O2")` no game.cpp.
+- Tela: barramento **Arduino_ESP32SPIDMA a 80 MHz, sem MISO** (o driver do ESP-IDF limita a 26,7 MHz com MISO); o jogo
+  inverte os bytes da faixa e envia com `draw16bitBeRGBBitmap` (DMA direto do buffer). Envio 32 ms + desenho ~15 ms = ~20 FPS.
+  ⚠️ Etapa 8: o SD (CS 15) divide SCK/MOSI/MISO com a tela; o barramento da tela está sem MISO → planejar o acesso ao SD.
+- Usuário: as animações da tela de título do jogo podem ser reduzidas se precisar de desempenho.
+- Depuração: `g` pelo serial abre o jogo.
+
 ## Pendências de desempenho (Etapa 12)
 Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a capa baixa em 0,07 s):
 - Abrir TLS com `i.scdn.co` leva 3–10 s (primeira capa ao abrir a tela); capas seguintes ~0,8 s de download + 0,2–1,1 s de decodificação.
@@ -68,6 +88,9 @@ Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a c
 - **Pedido do usuário: avaliar cache das capas no cartão SD** (a filha ouve sempre as mesmas músicas): salvar o JPEG
   (ou o RGB565 150x150 já decodificado, 45 KB) com nome = id da imagem na URL; na repetição evita o TLS com `i.scdn.co`
   (3–10 s) e a decodificação. Atenção: SD divide o barramento SPI com o LCD (CS 15) — acessar sob o mesmo controle do LVGL.
+- Jogo: ~20 FPS limitado pelo envio (32 ms/quadro a 80 MHz). Ideia: montar a próxima faixa enquanto o DMA envia a anterior
+  (2 buffers; precisa de envio assíncrono, a GFX só tem POLL_START+POLL_END juntos) → até ~30 FPS. Game over a ~15 FPS
+  (escurece a tela toda a cada quadro; dá para escurecer só uma vez). Título pode ter animações reduzidas (ok do usuário).
 - Ideias: tarefa separada para a capa; decodificar com `JD_FASTDECODE`; investigar por que o handshake demora (CPU vs rede,
   `CONFIG_MBEDTLS_*`, sessão TLS reaproveitada); reduzir buffers TLS; HTTP/1.0 vs keep-alive.
 
@@ -92,7 +115,8 @@ Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a c
 - LVGL com **1 buffer de 480x40** (38 KB, RAM interna) — decisão do usuário; o flush é bloqueante, então 2 buffers não ajudavam.
 - Com Wi-Fi conectado, na home: ~155 KB livres (maior bloco ~110 KB). Na tela do Spotify com as 2 conexões TLS: ~53 KB (maior ~30 KB).
 - PSRAM livre ~2 MB (Strings > 4 KB vão para a PSRAM: `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`).
-- Programa: 1,67 MB de 3 MB (53%).
+- Programa: 2,14 MB de 3 MB (68%) — o atlas do jogo ocupa ~420 KB.
+- No jogo (Wi-Fi desligado): heap interno ~136 KB livres (maior bloco ~74 KB), PSRAM ~1,83 MB.
 - Bateria: % do AXP2101 parece baixa para a tensão (14% @ 3,82 V); o chip calibra após um ciclo completo (comentário do exemplo oficial).
 
 ## Placa (confirmado com `esptool flash-id`)

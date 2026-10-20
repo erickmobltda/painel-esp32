@@ -8,6 +8,7 @@
 #include "net.h"
 #include "spotify.h"
 #include "ui.h"
+#include "game.h"
 
 void setup() {
   Serial.begin(115200);
@@ -28,10 +29,17 @@ void setup() {
 }
 
 void loop() {
+  if (gameRunning()) {
+    if (!gameFrame()) {
+      gameStop();
+      uiShowHome();
+    }
+    return;
+  }
   lv_timer_handler();
   netLoop();
 
-  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela; 'q' busca a fila
+  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela; 'q' busca a fila; 'g' abre o jogo
   if (Serial.available()) {
     char c = Serial.read();
     if (c == 's') {
@@ -41,6 +49,8 @@ void loop() {
       spotifySetActive(debugActive);
     } else if (c == 'q') {
       spotifyRequestQueue(true);
+    } else if (c == 'g') {
+      gameStart();
     }
   }
   delay(5);

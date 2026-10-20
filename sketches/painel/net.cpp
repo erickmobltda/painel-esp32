@@ -23,6 +23,7 @@ static String authState;  // "state" do OAuth: confere que o code colado veio de
 static uint8_t pinFailures = 0;
 static uint32_t pinLockedAt = 0;
 static uint32_t restartAt = 0;
+static bool paused = false;  // Wi-Fi desligado pelo jogo
 
 static String randomDigits(uint8_t n) {
   String s;
@@ -299,7 +300,7 @@ void netLoop() {
   wl_status_t now = WiFi.status();
   // O auto-reconnect do core só age quando uma conexão já feita cai; se a tentativa
   // inicial falhar (ex.: roteador recusou), tenta de novo periodicamente.
-  if (!setupMode && now != WL_CONNECTED && millis() - lastAttempt > WIFI_RETRY_MS) {
+  if (!setupMode && !paused && now != WL_CONNECTED && millis() - lastAttempt > WIFI_RETRY_MS) {
     lastAttempt = millis();
     Serial.println("[net] nova tentativa de conexao Wi-Fi");
     WiFi.disconnect();
@@ -317,6 +318,26 @@ void netLoop() {
       Serial.printf("[net] status Wi-Fi %d\n", now);
     }
   }
+}
+
+void netPause() {
+  if (setupMode || paused) return;
+  paused = true;
+  if (mdnsStarted) {
+    MDNS.end();
+    mdnsStarted = false;
+  }
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  Serial.println("[net] Wi-Fi desligado");
+}
+
+void netResume() {
+  if (!paused) return;
+  paused = false;
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+  Serial.println("[net] Wi-Fi religado, conectando");
 }
 
 NetStatus netStatus() {

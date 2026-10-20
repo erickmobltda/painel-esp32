@@ -56,3 +56,16 @@
 ## [2026-10-20] — Ler o log inteiro antes de concluir
 - **What happened**: concluí que "tudo ficou lento" olhando um log que só registra consultas lentas.
 - **Rule**: lembrar quais filtros o próprio log aplica antes de tirar conclusões; medir as fases separadamente (cabeçalho, corpo, decodificação).
+
+## [2026-10-20] — Desempenho da tela SPI (ST7796) no ESP32
+- **What happened**: o jogo começou a 7,6 FPS. Medindo por fase: montagem 44 ms + envio 84 ms.
+- **Why**: `Arduino_ESP32SPI` envia 32 pixels por vez (FIFO de 64 bytes) e inverte bytes na CPU; o ESP32SPIDMA também inverte pixel a pixel em `draw16bitRGBBitmap`; código compilado com -Os; laços com divisão por pixel.
+- **Rule**: medir cada fase antes de otimizar; para tela cheia usar `Arduino_ESP32SPIDMA` a 80 MHz sem MISO + buffer na RAM interna já em big-endian + `draw16bitBeRGBBitmap`; `#pragma GCC optimize("O2")` no arquivo quente.
+
+## [2026-10-20] — Conferir tabelas copiadas à mão
+- **What happened**: dois glifos da fonte 5x7 ficaram com um caractere a menos ao converter do JS.
+- **Rule**: gerar tabelas a partir da fonte original por script (ou conferir por script), nunca redigitar.
+
+## [2026-10-20] — Toques fora dos botões no título/game over
+- **What happened**: no game over, tocar em "TENTAR DE NOVO" não fazia nada (só os botões valiam).
+- **Rule**: ao restringir controles, manter o comportamento do original fora da jogabilidade (no original o canvas inteiro chama pressJump).

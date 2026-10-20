@@ -8,7 +8,9 @@
 #include "TouchDrvFT6X36.hpp"
 
 static TCA9554 tca(TCA9554_ADDR);
-static Arduino_DataBus *bus = new Arduino_ESP32SPI(PIN_LCD_DC, PIN_LCD_CS, PIN_SPI_SCK, PIN_SPI_MOSI, PIN_SPI_MISO);
+// Barramento com DMA: o jogo envia a tela inteira a cada quadro (32 ms a 80 MHz, contra 84 ms no barramento
+// sem DMA a 40 MHz). Sem MISO: o driver SPI do ESP-IDF limita a 26,7 MHz quando o MISO está configurado.
+static Arduino_DataBus *bus = new Arduino_ESP32SPIDMA(PIN_LCD_DC, PIN_LCD_CS, PIN_SPI_SCK, PIN_SPI_MOSI, GFX_NOT_DEFINED);
 // Rotação 1 = paisagem 480x320 (placa deitada). O touch continua no sistema nativo (retrato 320x480).
 static Arduino_GFX *gfx = new Arduino_ST7796(bus, GFX_NOT_DEFINED /* RST */, LCD_ROTATION, true /* IPS */);
 static TouchDrvFT6X36 touch;
@@ -28,21 +30,35 @@ static void flushCb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color
   lv_disp_flush_ready(drv);
 }
 
+// Converte do sistema nativo do touch (retrato) para a rotação da tela
+static void mapTouch(int16_t &x, int16_t &y) {
+  int16_t nx = x, ny = y;
+#if LCD_ROTATION == 1
+  x = ny;
+  y = LCD_NATIVE_WIDTH - 1 - nx;
+#elif LCD_ROTATION == 3
+  x = LCD_NATIVE_HEIGHT - 1 - ny;
+  y = nx;
+#endif
+}
+
+uint8_t displayReadTouch(int16_t *x, int16_t *y, uint8_t max) {
+  uint8_t n = touch.getPoint(x, y, max);
+  if (n > max) n = max;
+  for (uint8_t i = 0; i < n; i++) mapTouch(x[i], y[i]);
+  return n;
+}
+
+Arduino_GFX *displayGfx() {
+  return gfx;
+}
+
 static void touchReadCb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
   int16_t x[1], y[1];
-  if (touch.getPoint(x, y, 1)) {
+  if (displayReadTouch(x, y, 1)) {
     data->state = LV_INDEV_STATE_PR;
-    // Converte do sistema nativo do touch (retrato) para a rotação da tela
-#if LCD_ROTATION == 1
-    data->point.x = y[0];
-    data->point.y = LCD_NATIVE_WIDTH - 1 - x[0];
-#elif LCD_ROTATION == 3
-    data->point.x = LCD_NATIVE_HEIGHT - 1 - y[0];
-    data->point.y = x[0];
-#else
     data->point.x = x[0];
     data->point.y = y[0];
-#endif
   } else {
     data->state = LV_INDEV_STATE_REL;
   }
@@ -63,7 +79,9 @@ bool displayInit() {
   tca.write1(TCA_PIN_TOUCH_RST, 1);
   delay(200);
 
-  if (!gfx->begin()) {
+  // 80 MHz: os pinos da tela são os nativos da VSPI (IO_MUX), que suportam essa velocidade.
+  // O padrão da biblioteca é 40 MHz; o jogo precisa do dobro para enviar a tela inteira a cada quadro.
+  if (!gfx->begin(80000000)) {
     Serial.println("[display] gfx->begin() falhou");
     return false;
   }

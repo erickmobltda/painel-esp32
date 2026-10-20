@@ -4,6 +4,7 @@
 #include "spotify.h"
 #include "clock.h"
 #include "fonts.h"
+#include "game.h"
 
 #include <Arduino.h>
 #include <lvgl.h>
@@ -126,20 +127,9 @@ static void refreshHome(lv_timer_t *) {
 static void settingsEvent(lv_event_t *);
 static void spotifyEvent(lv_event_t *);
 
-static void showPlaceholder(const char *title) {
-  lv_obj_t *scr = createScreen();
-  lv_obj_t *label = lv_label_create(scr);
-  lv_obj_set_style_text_font(label, &font_pt_28, 0);
-  lv_label_set_text_fmt(label, "%s\n\nEm breve", title);
-  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_align(label, LV_ALIGN_CENTER, 0, -50);
-  lv_obj_t *btn = createButton(scr, LV_SYMBOL_LEFT " Voltar", lv_palette_main(LV_PALETTE_BLUE), 200, 70, homeEvent);
-  lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -20);
-  loadScreen(scr, title);
-}
-
 static void gameEvent(lv_event_t *) {
-  showPlaceholder("Jogo");
+  logMemory("jogo");
+  gameStart();  // a partir do próximo loop() o jogo assume a tela
 }
 
 void uiShowHome() {
