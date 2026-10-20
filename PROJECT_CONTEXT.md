@@ -16,7 +16,8 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   foi antecipada para cá por decisão do usuário). Usuário confirmou na placa.
 - **Etapa 6 concluída (2026-10-20)**: fila (botão ☰ na tela do Spotify → tela "Fila", até 20 itens, nome + artista,
   rolagem por toque, atualiza a cada 10 s). Usuário confirmou na placa.
-- Próxima: **Etapa 7** — Jogo: resumo do HTML para aprovação. (Pendente de decisão: tocar uma música da fila ao tocar nela.)
+- Próxima: **Etapa 7** — Jogo: resumo do HTML para aprovação. (Tocar uma música da fila ao tocar nela: explicado ao usuário — pular N vezes ou
+  `PUT /play` com contexto+offset — não incluído por ora.)
 - **Etapa 12 (nova, última, pedido do usuário)**: investigar e melhorar desempenho do Spotify (ver "Pendências de desempenho").
 
 ## Estrutura do sketch `sketches/painel`
@@ -64,6 +65,9 @@ Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a c
 - Enquanto a capa baixa/decodifica, a tarefa não consulta nem executa comandos (botões esperam).
 - Com as duas conexões TLS abertas: heap interno livre **~53 KB, maior bloco ~30 KB** — pouca folga.
 - Já testado sem efeito: prioridade da tarefa 0 vs 1; desligar o modem sleep do Wi-Fi (mantido desligado só com a tela aberta).
+- **Pedido do usuário: avaliar cache das capas no cartão SD** (a filha ouve sempre as mesmas músicas): salvar o JPEG
+  (ou o RGB565 150x150 já decodificado, 45 KB) com nome = id da imagem na URL; na repetição evita o TLS com `i.scdn.co`
+  (3–10 s) e a decodificação. Atenção: SD divide o barramento SPI com o LCD (CS 15) — acessar sob o mesmo controle do LVGL.
 - Ideias: tarefa separada para a capa; decodificar com `JD_FASTDECODE`; investigar por que o handshake demora (CPU vs rede,
   `CONFIG_MBEDTLS_*`, sessão TLS reaproveitada); reduzir buffers TLS; HTTP/1.0 vs keep-alive.
 
