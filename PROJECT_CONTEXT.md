@@ -28,6 +28,10 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   A conferir também: RAM ao sair do Spotify (log mostrou 69 KB livres logo na troca; verificar se volta ao normal após
   alguns segundos, quando a tarefa fecha as conexões TLS).
 - **App "Pintar" (pedido extra do usuário, 2026-10-20) concluído**: confirmado na placa.
+- **Release v1.0 publicado (2026-10-20).**
+- Ideia em discussão: app de músicas para a filha (capas favoritas → tocar na Alexa). Descoberto: a Alexa toca na
+  **conta Spotify da filha** (cada conta só enxerga seus aparelhos) → provavelmente autorizar a conta dela (User Management).
+  Teste: `GET /me/player/devices` na conta do usuário veio vazio com nada tocando.
 - Próximas: melhorias que o usuário quer discutir; terminar testes da 9 → **11** README final (a 10, capa, já foi feita na 5) → **12** desempenho.
   Itens do checklist ainda sem confirmação do usuário: bateria escurece/apaga/acorda; sem Wi-Fi; script `tools/spotify_auth.py`
   (renovação do token sem regravar) — o usuário usou só o fluxo pela página da placa.
@@ -162,6 +166,14 @@ Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a c
 - No jogo (Wi-Fi desligado, som ligado): heap interno ~115 KB livres (maior bloco ~63 KB), PSRAM ~1,83 MB.
 - Home: ~135 KB livres (o barramento DMA da tela custa ~6 KB).
 - Bateria: % do AXP2101 parece baixa para a tensão (14% @ 3,82 V); o chip calibra após um ciclo completo (comentário do exemplo oficial).
+
+## Repositório e versões
+- GitHub (público, decisão do usuário após varredura sem segredos): https://github.com/erickmobltda/painel-esp32 — branch `main`.
+- **Release v1.0** (2026-10-20, tag `v1.0`): ponto de retorno seguro antes das melhorias. Anexos: bootloader, partitions,
+  boot_app0 e app (.bin) + SHA256SUMS. Voltar sem apagar configuração/desenho:
+  `esptool --chip esp32 --port $PORT --baud 921600 write-flash 0x1000 painel-v1.0-bootloader.bin 0x8000 painel-v1.0-partitions.bin 0xe000 painel-v1.0-boot_app0.bin 0x10000 painel-v1.0-app.bin`
+  (ou `git checkout v1.0`, compilar e gravar). Não usar o `.merged.bin` de 16 MB: ele apaga NVS e LittleFS.
+- Antes de publicar: conferir que nenhum `secrets.h`, Client ID/Secret, token ou senha de Wi-Fi entrou no histórico.
 
 ## Placa (confirmado com `esptool flash-id`)
 - Chip ESP32-D0WDR2-V3 rev v3.1, flash 16 MB (Winbond), MAC 20:e7:c8:d2:bc:fc
