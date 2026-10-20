@@ -6,6 +6,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <base64.h>
+#include <LittleFS.h>
 #include "extra/libs/sjpg/tjpgd.h"  // decodificador JPEG que vem com o LVGL (LV_USE_SJPG 1)
 
 // Lista de autoridades certificadoras embutida no core (ESP-IDF, CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL)
@@ -47,6 +48,19 @@ static int pendingArtW = 0, pendingArtH = 0;
 static uint32_t artVersion = 0, artVersionTaken = 0;  // (stateMutex)
 
 static volatile bool queueRequested = false;
+static volatile bool artWanted = true;  // capa grande só na tela do Spotify (o app Músicas usa miniaturas)
+
+// App Músicas: playlist, miniaturas das capas e "tocar a partir desta música"
+static const char *THUMB_DIR = "/capas";
+static const char *PLAYLIST_CACHE = "/musicas.txt";
+static const size_t PLAYLIST_MAX = 200;
+static String playlistId;                       // (stateMutex)
+static SpPlaylist playlistData;                 // (stateMutex)
+static volatile bool playlistRequested = false;
+static volatile uint32_t thumbsVersion = 0;     // muda a cada miniatura nova gravada
+static bool thumbsComplete = false;             // todas as miniaturas da playlist já estão na flash (só a tarefa)
+static String playTrackUri;                     // (stateMutex) pedido de tocar
+static volatile bool playRequested = false;
 static SpQueue queue;  // (stateMutex)
 
 static String accessToken;  // só usado pela tarefa
@@ -144,6 +158,7 @@ static void parsePlayer(const String &body) {
   filter["progress_ms"] = true;
   filter["device"]["name"] = true;
   filter["item"]["name"] = true;
+  filter["item"]["uri"] = true;
   filter["item"]["duration_ms"] = true;
   filter["item"]["artists"][0]["name"] = true;
   filter["item"]["show"]["name"] = true;  // podcast
@@ -188,6 +203,7 @@ static void parsePlayer(const String &body) {
   playback.error = "";
   playback.isPlaying = doc["is_playing"];
   playback.title = item["name"] | "";
+  playback.trackUri = item["uri"] | "";
   playback.artist = artist;
   playback.device = doc["device"]["name"] | "";
   playback.progressMs = doc["progress_ms"];
@@ -199,7 +215,7 @@ static void parsePlayer(const String &body) {
 
 // Requisição na conexão mantida aberta com api.spotify.com. Devolve o código HTTP (<0 = falha de conexão).
 static int apiRequest(NetworkClientSecure &client, HTTPClient &http, const char *method, const String &url, String &body,
-                      String &retryAfter) {
+                      String &retryAfter, const String &payload = "") {
   xSemaphoreTake(httpsMutex, portMAX_DELAY);
   static const char *headerKeys[] = {"Retry-After"};
   http.collectHeaders(headerKeys, 1);
@@ -209,15 +225,18 @@ static int apiRequest(NetworkClientSecure &client, HTTPClient &http, const char 
   http.begin(client, url);
   http.addHeader("Authorization", "Bearer " + accessToken);
   // O HTTPClient não manda Content-Length com corpo vazio, e o Spotify exige (senão 411)
-  if (strcmp(method, "GET") != 0) http.addHeader("Content-Length", "0");
+  if (payload.length()) http.addHeader("Content-Type", "application/json");
+  else if (strcmp(method, "GET") != 0) http.addHeader("Content-Length", "0");
   uint32_t started = millis();
-  int code = http.sendRequest(method, (uint8_t *)nullptr, 0);
+  int code = http.sendRequest(method, (uint8_t *)payload.c_str(), payload.length());
   int size = http.getSize();
-  body = code == 200 ? http.getString() : "";
+  // Lê a resposta inteira quando há corpo (inclusive de erro): corpo esquecido na conexão mantida aberta quebra o
+  // próximo pedido. 204 e tamanho 0 não têm corpo — ler ali faria o HTTPClient esperar o servidor fechar (trava).
+  body = (code > 0 && code != 204 && size != 0) ? http.getString() : "";
   uint32_t elapsed = millis() - started;
   if ((code != 200 && code != 204) || elapsed > 1500) {
-    Serial.printf("[spotify] %s %s: HTTP %d, %d bytes (anunciado %d) em %u ms\n", method, url.c_str() + 30, code,
-                  body.length(), size, elapsed);
+    Serial.printf("[spotify] %s %s: HTTP %d, %d bytes (anunciado %d) em %u ms%s%s\n", method, url.c_str() + 30, code,
+                  body.length(), size, elapsed, code >= 400 ? " | " : "", code >= 400 ? body.substring(0, 200).c_str() : "");
   }
   retryAfter = http.header("Retry-After");
   if (code < 0) {
@@ -283,6 +302,13 @@ static uint32_t pollOnce(NetworkClientSecure &client, HTTPClient &http) {
   }
 }
 
+static void setNotice(const String &text) {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  playback.notice = text;
+  playback.noticeAt = millis();
+  xSemaphoreGive(stateMutex);
+}
+
 // GET /v1/me/player/queue: a resposta traz os objetos completos das músicas (~5 KB cada, vai para a PSRAM);
 // o filtro do ArduinoJson guarda só nome e artistas.
 static void fetchQueue(NetworkClientSecure &client, HTTPClient &http) {
@@ -320,13 +346,6 @@ static void fetchQueue(NetworkClientSecure &client, HTTPClient &http) {
   xSemaphoreTake(stateMutex, portMAX_DELAY);
   result.version = queue.version + 1;
   queue = result;
-  xSemaphoreGive(stateMutex);
-}
-
-static void setNotice(const String &text) {
-  xSemaphoreTake(stateMutex, portMAX_DELAY);
-  playback.notice = text;
-  playback.noticeAt = millis();
   xSemaphoreGive(stateMutex);
 }
 
@@ -419,6 +438,209 @@ static void publishArt(uint16_t *pixels, int w, int h) {
   xSemaphoreGive(stateMutex);
 }
 
+// Baixa um JPEG (na PSRAM) pela conexão de imagens mantida aberta. nullptr se falhar.
+static uint8_t *downloadJpeg(NetworkClientSecure &client, HTTPClient &http, const String &url, int &len) {
+  uint8_t *jpg = nullptr;
+  xSemaphoreTake(httpsMutex, portMAX_DELAY);
+  if (!client.connected()) setCaBundle(client);  // ver apiRequest: stop() apaga o vínculo com o CA bundle
+  http.begin(client, url);
+  int code = http.GET();
+  len = http.getSize();
+  if (code == 200 && len > 0 && len <= ART_MAX_BYTES) {
+    jpg = (uint8_t *)heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+    NetworkClient *stream = http.getStreamPtr();
+    int got = 0;
+    uint32_t deadline = millis() + 10000;
+    // read() devolve -1 quando ainda não chegou nada (não espera): aguarda os dados até completar
+    while (jpg && got < len && (int32_t)(deadline - millis()) > 0) {
+      int avail = stream->available();
+      if (avail > 0) {
+        int n = stream->read(jpg + got, min(avail, len - got));
+        if (n > 0) got += n;
+      } else if (!stream->connected()) {
+        break;
+      } else {
+        delay(5);
+      }
+    }
+    if (got != len) {
+      Serial.printf("[spotify] imagem: recebidos %d de %d bytes\n", got, len);
+      free(jpg);
+      jpg = nullptr;
+    }
+  } else {
+    Serial.printf("[spotify] imagem: HTTP %d, %d bytes\n", code, len);
+  }
+  http.end();  // com setReuse(true) a conexão continua aberta para a próxima imagem
+  if (!jpg) client.stop();
+  xSemaphoreGive(httpsMutex);
+  return jpg;
+}
+
+String spotifyThumbPath(const String &albumId) { return String(THUMB_DIR) + "/" + albumId + ".565"; }
+
+// Baixa a capa de 300 px, decodifica em 150x150 e reduz para SP_THUMB_SIZE, gravando na flash (RGB565 cru).
+static bool saveThumb(NetworkClientSecure &client, HTTPClient &http, const SpPlaylistItem &it) {
+  if (LittleFS.totalBytes() - LittleFS.usedBytes() < 64 * 1024) {
+    Serial.println("[musicas] flash cheia: sem espaco para mais capas");
+    return false;
+  }
+  int len = 0;
+  uint8_t *jpg = downloadJpeg(client, http, it.artUrl, len);
+  if (!jpg) return false;
+  int w = 0, h = 0;
+  uint16_t *pixels = decodeJpeg(jpg, len, w, h);
+  free(jpg);
+  if (!pixels) return false;
+  const size_t size = SP_THUMB_SIZE * SP_THUMB_SIZE * 2;
+  uint16_t *thumb = (uint16_t *)heap_caps_malloc(size, MALLOC_CAP_SPIRAM);  // 25 KB: nunca na RAM interna
+  bool ok = false;
+  if (thumb) {
+    for (int y = 0; y < SP_THUMB_SIZE; y++)
+      for (int x = 0; x < SP_THUMB_SIZE; x++) thumb[y * SP_THUMB_SIZE + x] = pixels[(y * h / SP_THUMB_SIZE) * w + x * w / SP_THUMB_SIZE];
+    if (!LittleFS.exists(THUMB_DIR)) LittleFS.mkdir(THUMB_DIR);  // a LittleFS não cria pastas ao abrir
+    File f = LittleFS.open(spotifyThumbPath(it.albumId), "w");
+    ok = f && f.write((const uint8_t *)thumb, size) == size;
+    f.close();
+    if (!ok) Serial.printf("[musicas] falha ao gravar a capa %s na flash\n", it.albumId.c_str());
+    free(thumb);
+  }
+  free(pixels);
+  if (ok) {
+    thumbsVersion++;
+    Serial.printf("[musicas] capa %s gravada (flash: %u de %u KB usados)\n", it.albumId.c_str(),
+                  LittleFS.usedBytes() / 1024, LittleFS.totalBytes() / 1024);
+  }
+  return ok;
+}
+
+static void savePlaylistCache(const SpPlaylist &pl) {
+  File f = LittleFS.open(PLAYLIST_CACHE, "w");
+  if (!f) return;
+  for (const SpPlaylistItem &it : pl.items) f.printf("%s\t%s\t%s\n", it.uri.c_str(), it.albumId.c_str(), it.artUrl.c_str());
+  f.close();
+}
+static void loadPlaylistCache(SpPlaylist &pl) {
+  File f = LittleFS.open(PLAYLIST_CACHE, "r");
+  if (!f) return;
+  while (f.available() && pl.items.size() < PLAYLIST_MAX) {
+    String line = f.readStringUntil('\n');
+    int a = line.indexOf('\t'), b = line.indexOf('\t', a + 1);
+    if (a < 0 || b < 0) continue;
+    pl.items.push_back({line.substring(0, a), line.substring(a + 1, b), line.substring(b + 1)});
+  }
+  f.close();
+  pl.loaded = !pl.items.empty();
+}
+
+// GET /playlists/{id}/items (só devolve as músicas de playlists do próprio usuário — regra de fev/2026)
+static void fetchPlaylist(NetworkClientSecure &client, HTTPClient &http) {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  String id = playlistId;
+  xSemaphoreGive(stateMutex);
+  JsonDocument filter;
+  filter["next"] = true;
+  filter["items"][0]["item"]["uri"] = true;
+  filter["items"][0]["item"]["album"]["id"] = true;
+  filter["items"][0]["item"]["album"]["images"][0]["url"] = true;
+  filter["items"][0]["item"]["album"]["images"][0]["width"] = true;
+
+  SpPlaylist result;
+  String url = "https://api.spotify.com/v1/playlists/" + id + "/items?limit=50&market=from_token";
+  while (url.length() && result.items.size() < PLAYLIST_MAX) {
+    String body, retryAfter;
+    int code = apiRequest(client, http, "GET", url, body, retryAfter);
+    if (code != 200) {
+      if (code == 401) accessToken = "";
+      Serial.printf("[musicas] playlist: HTTP %d\n", code);
+      result.failed = true;
+      break;
+    }
+    JsonDocument doc;
+    if (deserializeJson(doc, body, DeserializationOption::Filter(filter))) {
+      result.failed = true;
+      break;
+    }
+    for (JsonObject entry : doc["items"].as<JsonArray>()) {
+      JsonObject item = entry["item"];
+      if (item.isNull() || !item["uri"].is<const char *>()) continue;
+      SpPlaylistItem it;
+      it.uri = item["uri"].as<String>();
+      it.albumId = item["album"]["id"] | "";
+      int best = INT_MAX;
+      for (JsonObject img : item["album"]["images"].as<JsonArray>()) {  // menor imagem com >= 150 px (a de 300)
+        int w = img["width"] | 0;
+        if (w >= 150 && w < best) {
+          best = w;
+          it.artUrl = img["url"].as<String>();
+        }
+      }
+      result.items.push_back(it);
+    }
+    url = doc["next"] | "";
+  }
+  if (!result.failed) {
+    result.loaded = true;
+    thumbsComplete = false;
+    savePlaylistCache(result);
+    Serial.printf("[musicas] playlist: %u musicas\n", result.items.size());
+  }
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  if (result.failed) {
+    playlistData.failed = !playlistData.loaded;  // com cache, segue mostrando o que já tinha
+  } else {
+    result.version = playlistData.version + 1;
+    playlistData = result;
+  }
+  xSemaphoreGive(stateMutex);
+}
+
+// Próxima miniatura que ainda não está na flash (álbuns repetidos dividem a mesma). false = todas prontas.
+static bool nextMissingThumb(SpPlaylistItem &out) {
+  if (thumbsComplete) return false;
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  std::vector<SpPlaylistItem> items = playlistData.items;  // confere a flash fora do mutex
+  xSemaphoreGive(stateMutex);
+  for (const SpPlaylistItem &it : items) {
+    if (it.albumId.length() && it.artUrl.length() && !LittleFS.exists(spotifyThumbPath(it.albumId))) {
+      out = it;
+      return true;
+    }
+  }
+  thumbsComplete = !items.empty();
+  if (thumbsComplete) Serial.println("[musicas] nada mais para baixar");
+  return false;
+}
+
+// Toca a música dentro da playlist (segue a playlist depois). Sem aparelho ativo (404), escolhe um da lista:
+// de preferência uma caixa de som (a Alexa aparece como "Speaker"), senão o primeiro.
+static void playInPlaylist(NetworkClientSecure &client, HTTPClient &http) {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  String body = "{\"context_uri\":\"spotify:playlist:" + playlistId + "\",\"offset\":{\"uri\":\"" + playTrackUri + "\"}}";
+  xSemaphoreGive(stateMutex);
+  String resp, retryAfter;
+  int code = apiRequest(client, http, "PUT", String(API_URL) + "/play", resp, retryAfter, body);
+  if (code == 404) {
+    apiRequest(client, http, "GET", String(API_URL) + "/devices", resp, retryAfter);
+    JsonDocument doc;
+    deserializeJson(doc, resp);
+    String deviceId;
+    for (JsonObject d : doc["devices"].as<JsonArray>()) {
+      if (d["is_restricted"] | false) continue;
+      if (deviceId.isEmpty() || strcmp(d["type"] | "", "Speaker") == 0) deviceId = d["id"].as<String>();
+      if (strcmp(d["type"] | "", "Speaker") == 0) break;
+    }
+    if (deviceId.isEmpty()) {
+      setNotice("Nenhum aparelho: abra o Spotify no celular ou chame a Alexa");
+      return;
+    }
+    code = apiRequest(client, http, "PUT", String(API_URL) + "/play?device_id=" + deviceId, resp, retryAfter, body);
+  }
+  if (code == 200 || code == 202 || code == 204) return;
+  if (code == 401) accessToken = "";
+  setNotice(code == 403 ? "O Spotify não permitiu tocar" : "Falha ao tocar (" + String(code) + ")");
+}
+
 // Baixa e decodifica a capa. Usa uma segunda conexão mantida aberta com o servidor de imagens
 // (i.scdn.co): só a primeira capa paga a abertura do TLS (~3-5 s); as seguintes levam ~1 s.
 static void fetchArt(NetworkClientSecure &client, HTTPClient &http, const String &url) {
@@ -429,43 +651,8 @@ static void fetchArt(NetworkClientSecure &client, HTTPClient &http, const String
   }
 
   uint32_t started = millis();
-  uint8_t *jpg = nullptr;
   int len = 0;
-  xSemaphoreTake(httpsMutex, portMAX_DELAY);
-  {
-    if (!client.connected()) setCaBundle(client);  // ver apiRequest: stop() apaga o vínculo com o CA bundle
-    http.begin(client, url);
-    int code = http.GET();
-    len = http.getSize();
-    if (code == 200 && len > 0 && len <= ART_MAX_BYTES) {
-      jpg = (uint8_t *)heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
-      NetworkClient *stream = http.getStreamPtr();
-      int got = 0;
-      uint32_t deadline = millis() + 10000;
-      // read() devolve -1 quando ainda não chegou nada (não espera): aguarda os dados até completar
-      while (jpg && got < len && (int32_t)(deadline - millis()) > 0) {
-        int avail = stream->available();
-        if (avail > 0) {
-          int n = stream->read(jpg + got, min(avail, len - got));
-          if (n > 0) got += n;
-        } else if (!stream->connected()) {
-          break;
-        } else {
-          delay(5);
-        }
-      }
-      if (got != len) {
-        Serial.printf("[spotify] capa: recebidos %d de %d bytes\n", got, len);
-        free(jpg);
-        jpg = nullptr;
-      }
-    } else {
-      Serial.printf("[spotify] capa: HTTP %d, %d bytes\n", code, len);
-    }
-    http.end();  // com setReuse(true) a conexão continua aberta para a próxima capa
-    if (!jpg) client.stop();
-  }
-  xSemaphoreGive(httpsMutex);
+  uint8_t *jpg = downloadJpeg(client, http, url, len);
   if (!jpg) {
     publishArt(nullptr, 0, 0);  // a tela mostra o ícone no lugar
     artUrlLoaded = "";          // tenta de novo daqui a pouco
@@ -503,6 +690,26 @@ static void spotifyTask(void *) {
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
       continue;
     }
+    // App Músicas baixando capas: só a conexão de imagens fica aberta (duas sessões TLS não cabem na
+    // RAM interna). A consulta do player pausa até terminar; pedidos de tocar e comandos têm prioridade.
+    SpPlaylistItem missing;
+    if (!artWanted && !playRequested && !playlistRequested && uxQueueMessagesWaiting(cmdQueue) == 0 &&
+        nextMissingThumb(missing)) {
+      http.end();
+      client.stop();
+      if (!saveThumb(artClient, artHttp, missing)) {
+        // falhou: marca como sem capa nesta sessão para não ficar tentando em laço
+        xSemaphoreTake(stateMutex, portMAX_DELAY);
+        for (SpPlaylistItem &it : playlistData.items)
+          if (it.albumId == missing.albumId) it.artUrl = "";
+        xSemaphoreGive(stateMutex);
+      }
+      continue;
+    }
+    if (!artWanted) {  // capas prontas (ou pedido urgente): libera a conexão de imagens antes de usar a API
+      artHttp.end();
+      artClient.stop();
+    }
     // Comandos primeiro; depois deles, consulta na hora para a tela refletir o resultado
     CmdMsg msg;
     while (xQueueReceive(cmdQueue, &msg, 0) == pdTRUE) {
@@ -514,7 +721,16 @@ static void spotifyTask(void *) {
     xSemaphoreTake(stateMutex, portMAX_DELAY);
     String artUrl = artUrlWanted;
     xSemaphoreGive(stateMutex);
-    if (artReload || (artUrl != artUrlLoaded && (int32_t)(millis() - artRetryAt) >= 0)) {
+    if (playRequested) {
+      playRequested = false;
+      playInPlaylist(client, http);
+      wait = 0;  // consulta logo em seguida
+    }
+    if (playlistRequested) {
+      playlistRequested = false;
+      fetchPlaylist(client, http);
+    }
+    if (artWanted && (artReload || (artUrl != artUrlLoaded && (int32_t)(millis() - artRetryAt) >= 0))) {
       artReload = false;
       fetchArt(artClient, artHttp, artUrl);
     }
@@ -651,4 +867,46 @@ SpQueue spotifyQueue() {
   SpQueue copy = queue;
   xSemaphoreGive(stateMutex);
   return copy;
+}
+
+void spotifySetArtWanted(bool wanted) { artWanted = wanted; }
+
+void spotifyRequestPlaylist(const String &id) {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  if (id != playlistId) {
+    playlistId = id;
+    thumbsComplete = false;
+    playlistData = SpPlaylist();
+    loadPlaylistCache(playlistData);  // mostra na hora o que já estava salvo
+    playlistData.version = 1;
+  }
+  xSemaphoreGive(stateMutex);
+  playlistRequested = true;
+  xTaskNotifyGive(taskHandle);
+}
+
+SpPlaylist spotifyPlaylist() {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  SpPlaylist copy = playlistData;
+  xSemaphoreGive(stateMutex);
+  return copy;
+}
+
+uint32_t spotifyThumbsVersion() { return thumbsVersion; }
+
+uint32_t spotifyPlaylistVersion() {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  uint32_t v = playlistData.version + (playlistData.failed ? 0x80000000u : 0);
+  xSemaphoreGive(stateMutex);
+  return v;
+}
+
+void spotifyPlayInPlaylist(const String &trackUri) {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  playTrackUri = trackUri;
+  playback.trackUri = trackUri;  // a moldura já vai para a capa tocada
+  playback.isPlaying = true;
+  xSemaphoreGive(stateMutex);
+  playRequested = true;
+  xTaskNotifyGive(taskHandle);
 }

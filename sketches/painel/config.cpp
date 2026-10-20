@@ -36,6 +36,7 @@ void configLoad(Config &cfg) {
   cfg.spClientSecret = prefs.getString("sp_secret", SECRET_SPOTIFY_CLIENT_SECRET);
   cfg.spRefreshToken = prefs.getString("sp_refresh", SECRET_SPOTIFY_REFRESH_TOKEN);
   cfg.spAuthDate = prefs.getString("sp_date", SECRET_SPOTIFY_AUTH_DATE);
+  cfg.kidPlaylist = prefs.getString("kid_playlist", "5BLKGFcPOFthBIkYROwHLK");  // playlist escolhida pelo usuário
   prefs.end();
 }
 
@@ -55,6 +56,13 @@ void configSaveSpotify(const String &clientId, const String &clientSecret, const
   prefs.putString("sp_secret", clientSecret);
   prefs.putString("sp_refresh", refreshToken);
   prefs.putString("sp_date", authDate);
+  prefs.end();
+}
+
+void configSaveKidPlaylist(const String &playlistId) {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putString("kid_playlist", playlistId);
   prefs.end();
 }
 

@@ -81,3 +81,19 @@
 ## [2026-10-20] — Nomes que colidem com macros de bibliotecas
 - **What happened**: `static const uint16_t WHITE` quebrou a compilação: o Arduino_GFX define `#define WHITE`.
 - **Rule**: evitar nomes genéricos em inglês (WHITE, BLACK, RED...) em arquivos que incluem Arduino_GFX; e no macOS usar `perl -pi -e 's/\bX\b/Y/g'` (o `sed` BSD não entende `\b`).
+
+## [2026-10-20] — Buffers `static` grandes vão para a RAM interna
+- **What happened**: `static uint16_t thumb[112*112]` (25 KB) dentro de uma função ocupou a RAM interna o tempo todo; com isso não cabiam 2 sessões TLS ("X509 - Allocation of memory failed").
+- **Rule**: buffers grandes sempre com `heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` na hora do uso; medir o heap do boot a cada recurso novo.
+
+## [2026-10-20] — LittleFS não cria pastas ao abrir arquivo
+- **What happened**: `LittleFS.open("/capas/x", "w")` falhava em silêncio (pasta inexistente); o código marcava as capas como "sem capa" e dizia que estava tudo pronto.
+- **Rule**: `LittleFS.mkdir()` antes; registrar no log tanto o sucesso quanto a falha de gravações.
+
+## [2026-10-20] — HTTPClient com conexão mantida aberta (keep-alive)
+- **What happened**: (1) corpo de um HTTP 400 não lido ficou na conexão → o pedido seguinte falhou ("send header failed"); (2) ao corrigir lendo sempre o corpo, `getString()` numa resposta 204 (sem corpo nem tamanho) travou esperando o servidor fechar.
+- **Rule**: ler o corpo de toda resposta que tem corpo (inclusive erro), e nunca chamar `getString()` em 204 ou tamanho 0.
+
+## [2026-10-20] — Comandos de depuração destrutivos
+- **What happened**: usei `x` (apaga as capas) para testar; o usuário abriu o app logo depois e viu as capas sumirem.
+- **Rule**: avisar o usuário antes de rodar teste que apaga dados visíveis, e restaurar o estado ao terminar.

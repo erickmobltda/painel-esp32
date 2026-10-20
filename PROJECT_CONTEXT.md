@@ -29,7 +29,8 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   alguns segundos, quando a tarefa fecha as conexões TLS).
 - **App "Pintar" (pedido extra do usuário, 2026-10-20) concluído**: confirmado na placa.
 - **Release v1.0 publicado (2026-10-20).**
-- Ideia em discussão: app de músicas para a filha (capas favoritas → tocar na Alexa). Descoberto: a Alexa toca na
+- **v1.1 (2026-10-20): app "Músicas"** (confirmado pelo usuário). A tela "Spotify" (controle remoto) ficou escondida.
+- (histórico) Ideia em discussão: app de músicas para a filha (capas favoritas → tocar na Alexa). Descoberto: a Alexa toca na
   **conta Spotify da filha** (cada conta só enxerga seus aparelhos) → provavelmente autorizar a conta dela (User Management).
   Teste: `GET /me/player/devices` na conta do usuário veio vazio com nada tocando.
 - Próximas: melhorias que o usuário quer discutir; terminar testes da 9 → **11** README final (a 10, capa, já foi feita na 5) → **12** desempenho.
@@ -94,6 +95,23 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   Para usar o SD (ex.: cache de capas da etapa 12) será preciso planejar o compartilhamento do barramento.
 - Usuário: as animações da tela de título do jogo podem ser reduzidas se precisar de desempenho.
 
+## App Músicas (decisões do usuário, v1.1) — `ui.cpp` (tela) + `spotify.cpp` (dados)
+- Tela inicial: **Músicas | Jogo | Pintar**. A tela "Spotify" não tem mais botão (código em `spotifyEvent`, mantido).
+- Grade de 8 capas (4x2, 112 px) da playlist do usuário (`5BLKGFcPOFthBIkYROwHLK`, 37 músicas/28 álbuns em 2026-10-20);
+  barra ⌂ ◀ ⏯ ▶. Tocar numa capa = `PUT /me/player/play` com `context_uri` da playlist + `offset.uri` da música
+  (toca e segue a playlist). Sem aparelho ativo (404) → `GET /devices` → prefere tipo "Speaker" (Alexa), senão o 1º;
+  lista vazia → aviso amarelo. Moldura verde na capa que está tocando (`trackUri` do player).
+- Regra do Spotify (fev/2026, doc oficial): `GET /playlists/{id}/items` só devolve músicas de playlists **da conta
+  autorizada**; o endpoint antigo `/tracks` foi removido. Cada token só enxerga os aparelhos da própria conta.
+- Playlist configurável na página da placa (form "Playlist do app Músicas", aceita link/URI/ID) → NVS `kid_playlist`.
+- Capas: baixadas da `i.scdn.co` (300 px) → TJpgDec 1/2 → reduzidas a 112x112 RGB565 → LittleFS `/capas/<albumId>.565`
+  (~28 KB cada com os blocos da LittleFS). Lista em cache `/musicas.txt` (abre na hora; atualiza pela internet).
+- **Uma conexão TLS por vez no modo Músicas** (duas não cabem na RAM): enquanto faltam capas, a API fica fechada e o
+  player não é consultado; pedido de tocar/comando tem prioridade.
+- ⚠️ Flash quase cheia: 28 capas = ~812 de 896 KB. `saveThumb` para quando sobra < 64 KB (reserva para o desenho do
+  Pintar); capas além disso ficam com o ♪. Solução proposta (etapa 12): tabela de partições custom com ~12 MB de LittleFS
+  (a flash tem 16 MB, o huge_app usa só 4 MB) — muda a tabela e apaga NVS/LittleFS uma vez.
+
 ## App Pintar — `paint.cpp` (decisões do usuário)
 - Tela inicial com 3 botões lado a lado (Spotify | Jogo | Pintar, 140x250).
 - Área de desenho 384x320 (canvas RGB565 na PSRAM) + barra de 96 px à direita: casinha (voltar ao soltar), lixeira
@@ -103,7 +121,7 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 - Salva em LittleFS (partição `spiffs` de 896 KB do huge_app), `/desenho.bin` em RLE (pares quantidade+cor):
   ao sair e 15 s depois do último traço. Na 1ª vez a partição é formatada (o log mostra "mount failed" uma vez: normal).
 - Abre via `paintRequestStart()` → `paintStartIfRequested()` no loop, DEPOIS do `lv_timer_handler()` (ver LESSONS).
-- Depuração: `p` pelo serial abre o Pintar.
+- Depuração: `p` pelo serial abre o Pintar; `m` abre o Músicas.
 
 ## Energia — `idle.cpp`
 - Brilho por PWM (`ledcAttach` no pino 25): aceso 255, escurecido 40, apagado 0. USB detectado pelo AXP2101 (a cada 1 s).
@@ -169,6 +187,7 @@ Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a c
 
 ## Repositório e versões
 - GitHub (público, decisão do usuário após varredura sem segredos): https://github.com/erickmobltda/painel-esp32 — branch `main`.
+- **Release v1.1** (2026-10-20, tag `v1.1`): app Músicas. Mesmo esquema de anexos/comando da v1.0 (arquivos `painel-v1.1-*`).
 - **Release v1.0** (2026-10-20, tag `v1.0`): ponto de retorno seguro antes das melhorias. Anexos: bootloader, partitions,
   boot_app0 e app (.bin) + SHA256SUMS. Voltar sem apagar configuração/desenho:
   `esptool --chip esp32 --port $PORT --baud 921600 write-flash 0x1000 painel-v1.0-bootloader.bin 0x8000 painel-v1.0-partitions.bin 0xe000 painel-v1.0-boot_app0.bin 0x10000 painel-v1.0-app.bin`

@@ -115,8 +115,15 @@ static String spotifyPage() {
          "window.open('https://accounts.spotify.com/authorize?response_type=code&client_id='+encodeURIComponent(c)"
          "+'&scope='+encodeURIComponent('" SPOTIFY_SCOPES "')"
          "+'&redirect_uri='+encodeURIComponent('" SPOTIFY_REDIRECT_URI "')"
-         "+'&state=" + authState + "','_blank')}</script>";
+         "+'&state=" + authState + "','_blank')}</script>"
+         "<h2>Playlist do app Músicas</h2><p>Atual: <code>" + htmlEscape(cfg.kidPlaylist) + "</code></p>"
+         "<form method=post action=/playlist>"
+         "PIN:<input name=pin inputmode=numeric required autocomplete=off>"
+         "Link da playlist (Compartilhar → Copiar link):<input name=link required autocomplete=off>"
+         "<button>Salvar playlist</button></form>"
+         "<p>A playlist precisa ser da conta autorizada acima (regra do Spotify para apps pessoais).</p>";
 }
+
 
 static bool pinLocked() {
   if (pinFailures < PIN_MAX_ATTEMPTS) return false;
@@ -217,6 +224,26 @@ static void handleSpotifySave() {
   server.send(200, "text/plain; charset=utf-8", "OK");
 }
 
+// Aceita o link (open.spotify.com/playlist/ID?si=...), a URI (spotify:playlist:ID) ou só o ID
+static void handlePlaylistSave() {
+  if (!checkPin()) return;
+  String link = server.arg("link");
+  link.trim();
+  int p = link.indexOf("playlist/");
+  if (p >= 0) link = link.substring(p + 9);
+  else if (link.startsWith("spotify:playlist:")) link = link.substring(17);
+  int end = link.indexOf('?');
+  if (end >= 0) link = link.substring(0, end);
+  if (link.length() < 10 || link.length() > 40) {
+    sendPage(400, "<p>Não reconheci o link da playlist.</p><p><a href=/>Voltar</a></p>");
+    return;
+  }
+  configSaveKidPlaylist(link);
+  configLoad(cfg);
+  Serial.printf("[net] playlist do app Musicas: %s\n", link.c_str());
+  sendPage(200, "<p>Playlist salva! Abra o app Músicas na placa.</p><p><a href=/>Voltar</a></p>");
+}
+
 // ---------- Rotas (as mesmas nos dois modos; cada handler confere o modo) ----------
 
 static void handleRoot() {
@@ -244,6 +271,10 @@ static void startServer() {
     });
     server.on("/spotify", HTTP_POST, [] {
       if (!setupMode) handleSpotifySave();
+      else server.send(403, "text/plain", "Configure o Wi-Fi primeiro");
+    });
+    server.on("/playlist", HTTP_POST, [] {
+      if (!setupMode) handlePlaylistSave();
       else server.send(403, "text/plain", "Configure o Wi-Fi primeiro");
     });
     server.on("/spotify/code", HTTP_POST, [] {

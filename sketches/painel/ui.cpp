@@ -6,6 +6,9 @@
 #include "fonts.h"
 #include "game.h"
 #include "paint.h"
+#include "config.h"
+
+#include <LittleFS.h>
 #include "sound.h"
 
 #include <Arduino.h>
@@ -128,6 +131,7 @@ static void refreshHome(lv_timer_t *) {
 
 static void settingsEvent(lv_event_t *);
 static void spotifyEvent(lv_event_t *);
+static void musicEvent(lv_event_t *);
 
 static void paintEvent(lv_event_t *) {
   logMemory("pintar");
@@ -162,9 +166,10 @@ void uiShowHome() {
   lv_label_set_text(batteryLabel, "");
   lv_obj_align(batteryLabel, LV_ALIGN_TOP_RIGHT, -10, 12);
 
-  // 3 apps lado a lado (decisão do usuário)
-  lv_obj_t *spotifyBtn = createButton(scr, LV_SYMBOL_AUDIO "\nSpotify", lv_color_hex(0x1DB954), 140, 250, spotifyEvent);
-  lv_obj_align(spotifyBtn, LV_ALIGN_BOTTOM_LEFT, 15, -20);
+  // 3 apps lado a lado (decisão do usuário). A tela "Spotify" (controle remoto) está escondida por enquanto:
+  // o código continua em spotifyEvent(), sem botão.
+  lv_obj_t *musicBtn = createButton(scr, LV_SYMBOL_AUDIO "\nMúsicas", lv_color_hex(0x1DB954), 140, 250, musicEvent);
+  lv_obj_align(musicBtn, LV_ALIGN_BOTTOM_LEFT, 15, -20);
 
   lv_obj_t *gameBtn = createButton(scr, LV_SYMBOL_PLAY "\nJogo", lv_color_hex(0xE67E22), 140, 250, gameEvent);
   lv_obj_align(gameBtn, LV_ALIGN_BOTTOM_MID, 0, -20);
@@ -510,6 +515,7 @@ static void spotifyEvent(lv_event_t *) {
   lv_obj_set_style_text_align(spMessage, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(spMessage, LV_ALIGN_CENTER, 0, 20);
 
+  spotifySetArtWanted(true);
   spotifySetActive(true);
   loadScreen(scr, "spotify", refreshSpotify, 250);
   onLeave = spotifyLeave;
@@ -600,4 +606,205 @@ static void queueEvent(lv_event_t *) {
   queueVersionShown = UINT32_MAX;
   loadScreen(scr, "fila", refreshQueue, 250);
   onLeave = spotifyLeave;
+}
+
+// ---------- Músicas (app da criança: capas da playlist, tocar ao tocar na capa) ----------
+
+static const int MU_PER_PAGE = 8, MU_GAP = 6, MU_X0 = 4, MU_Y0 = 6;
+static lv_obj_t *muCells[MU_PER_PAGE], *muImgs[MU_PER_PAGE], *muGrid, *muMessage, *muNotice, *muPlayLabel, *muPrev,
+    *muNext;
+static lv_img_dsc_t muDsc[MU_PER_PAGE];
+static uint16_t *muPix[MU_PER_PAGE];
+static String muUri[MU_PER_PAGE];
+static int muPage = 0, muPages = 1;
+static uint32_t muShownVersion, muShownThumbs;
+static SpPlaylist muList;  // cópia local, renovada só quando a versão muda
+
+static void muFreeImages() {
+  for (int i = 0; i < MU_PER_PAGE; i++) {
+    lv_img_cache_invalidate_src(&muDsc[i]);
+    free(muPix[i]);
+    muPix[i] = nullptr;
+  }
+}
+
+// Miniatura gravada pela tarefa do Spotify (RGB565 cru, SP_THUMB_SIZE²) → PSRAM → lv_img
+static uint16_t *muLoadThumb(const String &albumId) {
+  if (albumId.isEmpty()) return nullptr;
+  File f = LittleFS.open(spotifyThumbPath(albumId), "r");
+  if (!f) return nullptr;
+  size_t size = SP_THUMB_SIZE * SP_THUMB_SIZE * 2;
+  uint16_t *px = (uint16_t *)heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+  if (px && f.read((uint8_t *)px, size) != size) {
+    free(px);
+    px = nullptr;
+  }
+  f.close();
+  return px;
+}
+
+static void muShowPage() {
+  muFreeImages();
+  int n = muList.items.size();
+  muPages = max(1, (n + MU_PER_PAGE - 1) / MU_PER_PAGE);
+  muPage = constrain(muPage, 0, muPages - 1);
+  for (int i = 0; i < MU_PER_PAGE; i++) {
+    int idx = muPage * MU_PER_PAGE + i;
+    if (idx >= n) {
+      lv_obj_add_flag(muCells[i], LV_OBJ_FLAG_HIDDEN);
+      muUri[i] = "";
+      continue;
+    }
+    lv_obj_clear_flag(muCells[i], LV_OBJ_FLAG_HIDDEN);
+    muUri[i] = muList.items[idx].uri;
+    muPix[i] = muLoadThumb(muList.items[idx].albumId);
+    if (muPix[i]) {
+      muDsc[i].header.always_zero = 0;
+      muDsc[i].header.cf = LV_IMG_CF_TRUE_COLOR;
+      muDsc[i].header.w = SP_THUMB_SIZE;
+      muDsc[i].header.h = SP_THUMB_SIZE;
+      muDsc[i].data_size = SP_THUMB_SIZE * SP_THUMB_SIZE * 2;
+      muDsc[i].data = (const uint8_t *)muPix[i];
+      lv_img_set_src(muImgs[i], &muDsc[i]);
+      lv_obj_clear_flag(muImgs[i], LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(muImgs[i], LV_OBJ_FLAG_HIDDEN);  // fica o ♪ por baixo até a capa chegar
+    }
+  }
+  lv_obj_set_style_opa(muPrev, muPage > 0 ? LV_OPA_COVER : LV_OPA_30, 0);
+  lv_obj_set_style_opa(muNext, muPage < muPages - 1 ? LV_OPA_COVER : LV_OPA_30, 0);
+}
+
+static void refreshMusic(lv_timer_t *) {
+  uint32_t version = spotifyPlaylistVersion(), thumbs = spotifyThumbsVersion();
+  if (version != muShownVersion || thumbs != muShownThumbs) {
+    if (version != muShownVersion) muList = spotifyPlaylist();
+    muShownVersion = version;
+    muShownThumbs = thumbs;
+    muShowPage();
+  }
+
+  SpPlayback p = spotifyPlayback();
+  const char *message = nullptr;
+  if (p.state == SpState::NotConfigured) message = "Spotify não configurado.\nVeja " LV_SYMBOL_SETTINGS " na tela inicial.";
+  else if (p.state == SpState::NeedsReauth) message = "Reautorize o Spotify.\nVeja " LV_SYMBOL_SETTINGS " na tela inicial.";
+  else if (!muList.loaded) message = p.state == SpState::NoWifi ? "Sem Wi-Fi.\nTentando reconectar..."
+                                     : muList.failed             ? "Não consegui abrir a playlist.\nTentando de novo..."
+                                                                 : "Carregando músicas...";
+  if (message) {
+    lv_label_set_text(muMessage, message);
+    lv_obj_clear_flag(muMessage, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(muGrid, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(muMessage, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(muGrid, LV_OBJ_FLAG_HIDDEN);
+  }
+
+  // Moldura verde na capa que está tocando
+  bool playing = p.state == SpState::Ok && p.isPlaying;
+  for (int i = 0; i < MU_PER_PAGE; i++)
+    lv_obj_set_style_border_width(muCells[i], muUri[i].length() && muUri[i] == p.trackUri && p.state == SpState::Ok ? 5 : 0, 0);
+  lv_label_set_text(muPlayLabel, playing ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+
+  bool showNotice = p.notice.length() && millis() - p.noticeAt < 4000;
+  if (showNotice) {
+    lv_label_set_text(muNotice, p.notice.c_str());
+    lv_obj_clear_flag(muNotice, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(muNotice, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+
+static void muCellEvent(lv_event_t *e) {
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  if (muUri[i].length()) spotifyPlayInPlaylist(muUri[i]);
+}
+static void muPageEvent(lv_event_t *e) {
+  int delta = (int)(intptr_t)lv_event_get_user_data(e);
+  int page = constrain(muPage + delta, 0, muPages - 1);
+  if (page == muPage) return;
+  muPage = page;
+  muShowPage();
+}
+static void muPlayEvent(lv_event_t *) {
+  SpPlayback p = spotifyPlayback();
+  if (p.state == SpState::Ok) spotifyCommand(p.isPlaying ? SpCmd::Pause : SpCmd::Play);
+  else if (muUri[0].length()) spotifyPlayInPlaylist(muUri[0]);  // nada tocando: começa pela 1ª capa da página
+}
+static void muScreenDeleted(lv_event_t *) { muFreeImages(); }
+static void musicLeave() {
+  spotifySetActive(false);
+  spotifySetArtWanted(true);
+}
+
+void uiShowMusic() { musicEvent(nullptr); }
+
+static void musicEvent(lv_event_t *) {
+  lv_obj_t *scr = createScreen();
+  lv_obj_add_event_cb(scr, muScreenDeleted, LV_EVENT_DELETE, nullptr);
+
+  muGrid = lv_obj_create(scr);
+  lv_obj_remove_style_all(muGrid);
+  lv_obj_set_size(muGrid, 480, 240);
+  lv_obj_clear_flag(muGrid, LV_OBJ_FLAG_SCROLLABLE);
+  for (int i = 0; i < MU_PER_PAGE; i++) {
+    lv_obj_t *cell = lv_obj_create(muGrid);
+    lv_obj_remove_style_all(cell);
+    lv_obj_set_size(cell, SP_THUMB_SIZE, SP_THUMB_SIZE);
+    lv_obj_set_pos(cell, MU_X0 + (i % 4) * (SP_THUMB_SIZE + MU_GAP), MU_Y0 + (i / 4) * (SP_THUMB_SIZE + MU_GAP));
+    lv_obj_set_style_bg_color(cell, lv_color_hex(0x303030), 0);
+    lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(cell, 8, 0);
+    lv_obj_set_style_clip_corner(cell, true, 0);
+    lv_obj_set_style_border_color(cell, lv_color_hex(0x1DB954), 0);
+    lv_obj_set_style_border_post(cell, true, 0);  // moldura por cima da capa
+    lv_obj_add_flag(cell, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(cell, muCellEvent, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    lv_obj_t *icon = lv_label_create(cell);
+    lv_obj_set_style_text_font(icon, &font_pt_28, 0);
+    lv_label_set_text(icon, LV_SYMBOL_AUDIO);
+    lv_obj_center(icon);
+    muImgs[i] = lv_img_create(cell);
+    lv_obj_center(muImgs[i]);
+    lv_obj_add_flag(muImgs[i], LV_OBJ_FLAG_HIDDEN);
+    muCells[i] = cell;
+    muPix[i] = nullptr;
+  }
+
+  // Barra de baixo: início, página anterior, tocar/pausar, próxima página
+  lv_obj_t *home = createButton(scr, LV_SYMBOL_HOME, lv_palette_main(LV_PALETTE_BLUE), 90, 64, homeEvent);
+  lv_obj_align(home, LV_ALIGN_BOTTOM_LEFT, 6, -4);
+  muPrev = createButton(scr, LV_SYMBOL_LEFT, lv_color_hex(0x404040), 100, 64, muPageEvent);
+  lv_obj_remove_event_cb(muPrev, muPageEvent);
+  lv_obj_add_event_cb(muPrev, muPageEvent, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
+  lv_obj_align(muPrev, LV_ALIGN_BOTTOM_LEFT, 110, -4);
+  lv_obj_t *play = createButton(scr, LV_SYMBOL_PLAY, lv_color_hex(0x1DB954), 130, 64, muPlayEvent);
+  lv_obj_align(play, LV_ALIGN_BOTTOM_LEFT, 224, -4);
+  muPlayLabel = lv_obj_get_child(play, 0);
+  muNext = createButton(scr, LV_SYMBOL_RIGHT, lv_color_hex(0x404040), 100, 64, muPageEvent);
+  lv_obj_remove_event_cb(muNext, muPageEvent);
+  lv_obj_add_event_cb(muNext, muPageEvent, LV_EVENT_CLICKED, (void *)(intptr_t)1);
+  lv_obj_align(muNext, LV_ALIGN_BOTTOM_RIGHT, -6, -4);
+
+  muMessage = createLabel(scr, &font_pt_20, 440, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(muMessage, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(muMessage, LV_ALIGN_CENTER, 0, -40);
+  muNotice = createLabel(scr, nullptr, 460, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_bg_color(muNotice, lv_color_hex(0x1a2250), 0);
+  lv_obj_set_style_bg_opa(muNotice, LV_OPA_90, 0);
+  lv_obj_set_style_text_color(muNotice, lv_color_hex(0xFFD23F), 0);
+  lv_obj_set_style_text_align(muNotice, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_pad_all(muNotice, 8, 0);
+  lv_obj_align(muNotice, LV_ALIGN_TOP_MID, 0, 100);
+  lv_obj_add_flag(muNotice, LV_OBJ_FLAG_HIDDEN);
+
+  Config cfg;
+  configLoad(cfg);
+  muShownVersion = muShownThumbs = UINT32_MAX;
+  muList = SpPlaylist();
+  spotifyRequestPlaylist(cfg.kidPlaylist);
+  spotifySetArtWanted(false);
+  spotifySetActive(true);
+  loadScreen(scr, "musicas", refreshMusic, 300);
+  onLeave = musicLeave;
 }

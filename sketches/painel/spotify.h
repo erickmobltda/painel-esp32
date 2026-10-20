@@ -20,6 +20,7 @@ struct SpPlayback {
   SpState state = SpState::Loading;
   bool isPlaying = false;
   String title, artist, device;
+  String trackUri;  // spotify:track:... (o app Músicas usa para marcar a capa que está tocando)
   uint32_t progressMs = 0;
   uint32_t durationMs = 0;
   uint32_t fetchedAt = 0;  // millis() da resposta, para avançar a barra localmente
@@ -63,6 +64,28 @@ bool spotifyTakeArt(uint16_t *&pixels, int &w, int &h);
 // clear = true descarta o resultado anterior (tela recém-aberta mostra "Carregando").
 void spotifyRequestQueue(bool clear);
 SpQueue spotifyQueue();
+
+// ---------- App Músicas (playlist da criança) ----------
+static const int SP_THUMB_SIZE = 112;  // lado das miniaturas gravadas na flash (RGB565 cru)
+struct SpPlaylistItem {
+  String uri, albumId, artUrl;
+};
+struct SpPlaylist {
+  bool loaded = false;  // tem itens (do cache ou da internet)
+  bool failed = false;  // falhou e não há cache
+  uint32_t version = 0;
+  std::vector<SpPlaylistItem> items;
+};
+// Capa grande só na tela do Spotify; o app Músicas desliga e no lugar baixa as miniaturas que faltam.
+void spotifySetArtWanted(bool wanted);
+// Carrega o cache da flash na hora e atualiza pela internet em seguida.
+void spotifyRequestPlaylist(const String &id);
+SpPlaylist spotifyPlaylist();
+uint32_t spotifyThumbsVersion();  // muda a cada miniatura nova
+uint32_t spotifyPlaylistVersion();  // muda quando a lista muda (evita copiar a lista à toa)
+String spotifyThumbPath(const String &albumId);
+// Toca a música dentro da playlist (e segue a playlist depois).
+void spotifyPlayInPlaylist(const String &trackUri);
 
 // Troca o "code" do login (fluxo pela página da placa) por um refresh token. Bloqueia ~1-2 s.
 bool spotifyExchangeCode(const String &clientId, const String &clientSecret, const String &code,

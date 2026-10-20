@@ -13,6 +13,8 @@
 #include "idle.h"
 #include "paint.h"
 
+#include <LittleFS.h>
+
 void setup() {
   Serial.begin(115200);
   Serial.printf("\n[painel] iniciando (motivo do reinicio: %d)\n", esp_reset_reason());
@@ -23,6 +25,8 @@ void setup() {
     while (true) delay(1000);
   }
   powerInit();  // sem PMU a tela ainda funciona, só sem bateria
+  // Flash de arquivos (desenho do Pintar, capas do app Músicas); formata na 1ª vez
+  if (!LittleFS.begin(true)) Serial.println("[painel] LittleFS indisponivel");
   soundBegin();
 
   netBegin();
@@ -57,7 +61,7 @@ void loop() {
   paintStartIfRequested();
   netLoop();
 
-  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela; 'q' busca a fila; 'g' abre o jogo; 'b' simula bateria; 'p' abre o Pintar
+  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela; 'q' busca a fila; 'g' abre o jogo; 'b' simula bateria; 'p' abre o Pintar; 'm' abre o Músicas
   if (Serial.available()) {
     char c = Serial.read();
     if (c == 's') {
@@ -69,6 +73,8 @@ void loop() {
       spotifyRequestQueue(true);
     } else if (c == 'g') {
       gameStart();
+    } else if (c == 'm') {
+      uiShowMusic();
     } else if (c == 'p') {
       paintStart();
     } else if (c == 'b') {
