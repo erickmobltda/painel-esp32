@@ -16,3 +16,11 @@
 ## [2026-10-20] — Trocar de tela dentro do evento de clique
 - **What happened**: `lv_scr_load_anim(..., 0, 0, true)` no LVGL 8.4 apaga a tela antiga na hora, inclusive o botão cujo evento está rodando.
 - **Rule**: trocar com `lv_scr_load(new)` + `lv_obj_del_async(old)` (função `loadScreen` em `ui.cpp`).
+
+## [2026-10-20] — WiFi.macAddress() antes de iniciar o Wi-Fi
+- **What happened**: o nome do AP saiu `Painel-FB3F`, sem relação com o MAC real (…bc:fc).
+- **Rule**: para identificar a placa antes do Wi-Fi subir, usar `ESP.getEfuseMac()`.
+
+## [2026-10-20] — Captura serial em background
+- **What happened**: capturei 10 min com saída só no final; ao encerrar o processo, o log se perdeu.
+- **Rule**: o script de captura deve escrever na saída em tempo real (flush) e não depender de terminar.

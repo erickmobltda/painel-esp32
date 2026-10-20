@@ -7,7 +7,10 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   usuário confirmou na placa texto + switches + toque.
 - **Etapa 2 concluída (2026-10-20)**: sketch `sketches/painel` com tela inicial em paisagem (Spotify | Jogo),
   barra de status (Wi-Fi placeholder, bateria %/carregando/USB). Usuário confirmou na placa: orientação, botões, voltar, ⚡ some sem USB.
-- Próxima: **Etapa 3** — Wi-Fi: AP de configuração + conexão + página de config com PIN.
+- **Etapa 3 concluída (2026-10-20)**: Wi-Fi com ponto de acesso de cadastro, conexão, tela ⚙ e página de config com PIN.
+  Usuário confirmou: cadastro pelo celular, reconexão após reiniciar, página na rede local, Trocar Wi-Fi/Cancelar.
+- Próxima: **Etapa 4** — Spotify (guiar criação do app, `tools/spotify_auth.py`, token na placa, música atual).
+  **Antes**: decidir com o usuário como liberar RAM interna para o TLS (ver Memória).
 
 ## Estrutura do sketch `sketches/painel`
 | Arquivo | Papel |
@@ -16,7 +19,20 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 | `board.h` | pinos e rotação (`LCD_ROTATION 1` = paisagem 480x320) |
 | `display.*` | reset LCD/touch via TCA9554, Arduino_GFX ST7796, touch FT6X36 (com conversão de coordenadas p/ rotação), LVGL 8 |
 | `power.*` | AXP2101 **somente leitura** (liga medições ADC; não altera tensões nem carga) |
-| `ui.*` | telas; `loadScreen()` troca tela, apaga a anterior com `lv_obj_del_async` e loga heap/PSRAM |
+| `ui.*` | telas (home, wifi_setup, settings, placeholders); `loadScreen()` troca tela, apaga a anterior com `lv_obj_del_async`, loga heap/PSRAM e roda o `refresh` da tela a cada 2 s |
+| `config.*` | NVS (Preferences, namespace `painel`): Wi-Fi + Spotify; fallback para `secrets.h` (fora do git; modelo em `secrets.example.h`) |
+| `net.*` | Wi-Fi + WebServer porta 80 + DNSServer (portal cativo) + mDNS `painel.local`; tudo do core, sem lib de terceiros |
+
+## Wi-Fi e página de configuração (decisões do usuário)
+- Sem Wi-Fi salvo → ponto de acesso `Painel-XXXX` (XXXX = 2 últimos bytes do MAC, aqui `Painel-BCFC`), senha de 8 dígitos
+  sorteada a cada ativação e mostrada na tela; portal cativo em `http://192.168.4.1`. Salvar → reinicia e conecta.
+- Conectado → `http://<ip>/` ou `http://painel.local/`: formulário do Spotify (`POST /spotify` com `pin, client_id,
+  client_secret, refresh_token, auth_date` AAAA-MM-DD; resposta `200 OK`). PIN de 6 dígitos novo a cada boot, na tela ⚙.
+  5 PINs errados → bloqueio de 60 s (HTTP 429).
+- ⚙ na home → Configurações (rede, IP, PIN, status Spotify) e "Trocar Wi-Fi" (sobe o AP; a rede antiga só é
+  substituída ao salvar; "Cancelar" reinicia).
+- Roteador fora do ar: status "sem conexao", o core reconecta sozinho (`setAutoReconnect`).
+- Fontes LVGL só têm ASCII → textos da tela sem acento ("conexao", "Inicio").
 
 ## Orientação e UI
 - **Paisagem** (placa deitada), escolha do usuário. Rotação de hardware GFX = 1; touch convertido em `display.cpp`
@@ -25,8 +41,9 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   o LVGL usa o `lv_conf.h` ao lado da pasta `lvgl`. O sketch `painel` NÃO tem lv_conf.h próprio, para não haver duas configs).
 
 ## Memória (medida na home)
-- Heap interno livre ~162 KB (maior bloco ~59 KB), PSRAM livre ~2 MB. Os 2 buffers LVGL (480x80x2 = 77 KB cada) estão
-  na RAM interna — candidato a reduzir/mover se TLS apertar nas etapas 3/4.
+- Sem Wi-Fi: heap interno livre ~162 KB (maior bloco ~59 KB). **Com Wi-Fi conectado: ~65 KB (maior bloco ~41 KB)**;
+  no modo AP ~55 KB. PSRAM livre ~2 MB. Os 2 buffers LVGL (480x80x2 = 77 KB cada) estão na RAM interna.
+- Programa: 1,36 MB de 3 MB (43%).
 - Bateria: % do AXP2101 parece baixa para a tensão (14% @ 3,82 V); o chip calibra após um ciclo completo (comentário do exemplo oficial).
 
 ## Placa (confirmado com `esptool flash-id`)

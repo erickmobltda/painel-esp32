@@ -5,6 +5,7 @@
 #include "board.h"
 #include "display.h"
 #include "power.h"
+#include "net.h"
 #include "ui.h"
 
 void setup() {
@@ -18,11 +19,14 @@ void setup() {
   }
   powerInit();  // sem PMU a tela ainda funciona, só sem bateria
 
-  uiShowHome();
+  netBegin();
+  if (netStatus().mode == NetMode::Setup) uiShowWifiSetup();
+  else uiShowHome();
   Serial.println("[painel] pronto");
 }
 
 void loop() {
   lv_timer_handler();
+  netLoop();
   delay(5);
 }
