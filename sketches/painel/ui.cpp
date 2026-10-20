@@ -1,6 +1,9 @@
 #include "ui.h"
 #include "power.h"
 #include "net.h"
+#include "spotify.h"
+#include "clock.h"
+#include "fonts.h"
 
 #include <Arduino.h>
 #include <lvgl.h>
@@ -9,7 +12,9 @@
 static lv_obj_t *batteryLabel = nullptr;
 static lv_obj_t *wifiLabel = nullptr;
 static lv_obj_t *infoLabel = nullptr;
+static lv_obj_t *spTitle, *spArtist, *spDevice, *spElapsed, *spTotal, *spMessage, *spBar;
 static lv_timer_t *refreshTimer = nullptr;
+static void (*onLeave)() = nullptr;  // chamado quando a tela atual é trocada
 
 static void logMemory(const char *screen) {
   Serial.printf("[mem] tela=%s heap_interno_livre=%u maior_bloco=%u psram_livre=%u\n", screen,
@@ -21,7 +26,12 @@ static void logMemory(const char *screen) {
 // Carrega a nova tela e apaga a anterior. A exclusão é adiada (async) porque normalmente
 // estamos dentro do evento de clique de um botão que pertence à tela antiga.
 // `refresh` (opcional) é chamado agora e a cada 2 s enquanto a tela estiver ativa.
-static void loadScreen(lv_obj_t *scr, const char *name, lv_timer_cb_t refresh = nullptr) {
+static void loadScreen(lv_obj_t *scr, const char *name, lv_timer_cb_t refresh = nullptr,
+                       uint32_t refreshMs = 2000) {
+  if (onLeave) {
+    onLeave();
+    onLeave = nullptr;
+  }
   if (refreshTimer) {
     lv_timer_del(refreshTimer);
     refreshTimer = nullptr;
@@ -32,15 +42,17 @@ static void loadScreen(lv_obj_t *scr, const char *name, lv_timer_cb_t refresh = 
   logMemory(name);
   if (refresh) {
     refresh(nullptr);
-    refreshTimer = lv_timer_create(refresh, 2000, nullptr);
+    refreshTimer = lv_timer_create(refresh, refreshMs, nullptr);
   }
 }
 
 static lv_obj_t *createScreen() {
   batteryLabel = wifiLabel = infoLabel = nullptr;
+  spTitle = spArtist = spDevice = spElapsed = spTotal = spMessage = spBar = nullptr;
   lv_obj_t *scr = lv_obj_create(nullptr);
   lv_obj_set_style_bg_color(scr, lv_color_hex(0x101010), 0);
   lv_obj_set_style_text_color(scr, lv_color_white(), 0);
+  lv_obj_set_style_text_font(scr, &font_pt_16, 0);
   return scr;
 }
 
@@ -52,7 +64,7 @@ static lv_obj_t *createButton(lv_obj_t *parent, const char *text, lv_color_t col
   lv_obj_set_style_radius(btn, 20, 0);
   lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
   lv_obj_t *label = lv_label_create(btn);
-  lv_obj_set_style_text_font(label, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(label, &font_pt_28, 0);
   lv_label_set_text(label, text);
   lv_obj_center(label);
   return btn;
@@ -60,7 +72,7 @@ static lv_obj_t *createButton(lv_obj_t *parent, const char *text, lv_color_t col
 
 static lv_obj_t *createInfoLabel(lv_obj_t *scr) {
   lv_obj_t *label = lv_label_create(scr);
-  lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
+  lv_obj_set_style_text_font(label, &font_pt_16, 0);
   lv_obj_set_width(label, 450);
   lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
   lv_obj_align(label, LV_ALIGN_TOP_LEFT, 15, 15);
@@ -104,27 +116,24 @@ static void refreshHome(lv_timer_t *) {
       break;
     case NetMode::Offline:
       lv_obj_set_style_text_color(wifiLabel, lv_color_hex(0x808080), 0);
-      lv_label_set_text(wifiLabel, LV_SYMBOL_WIFI " sem conexao");
+      lv_label_set_text(wifiLabel, LV_SYMBOL_WIFI " sem conexão");
       break;
   }
 }
 
 static void settingsEvent(lv_event_t *);
+static void spotifyEvent(lv_event_t *);
 
 static void showPlaceholder(const char *title) {
   lv_obj_t *scr = createScreen();
   lv_obj_t *label = lv_label_create(scr);
-  lv_obj_set_style_text_font(label, &lv_font_montserrat_28, 0);
+  lv_obj_set_style_text_font(label, &font_pt_28, 0);
   lv_label_set_text_fmt(label, "%s\n\nEm breve", title);
   lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_align(label, LV_ALIGN_CENTER, 0, -50);
   lv_obj_t *btn = createButton(scr, LV_SYMBOL_LEFT " Voltar", lv_palette_main(LV_PALETTE_BLUE), 200, 70, homeEvent);
   lv_obj_align(btn, LV_ALIGN_BOTTOM_MID, 0, -20);
   loadScreen(scr, title);
-}
-
-static void spotifyEvent(lv_event_t *) {
-  showPlaceholder("Spotify");
 }
 
 static void gameEvent(lv_event_t *) {
@@ -171,7 +180,7 @@ static void refreshWifiSetup(lv_timer_t *) {
                         "Configurar Wi-Fi\n\n"
                         "1. No celular, entre na rede #E67E22 %s#\n"
                         "    com a senha #E67E22 %s#\n"
-                        "2. A pagina abre sozinha. Se nao abrir,\n"
+                        "2. A página abre sozinha. Se não abrir,\n"
                         "    acesse #E67E22 http://%s#\n"
                         "3. Escolha sua rede e digite a senha.",
                         n.ssid.c_str(), n.apPass.c_str(), n.ip.c_str());
@@ -184,7 +193,7 @@ static void restartEvent(lv_event_t *) {
 void uiShowWifiSetup() {
   lv_obj_t *scr = createScreen();
   infoLabel = createInfoLabel(scr);
-  lv_obj_set_style_text_font(infoLabel, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(infoLabel, &font_pt_20, 0);
   lv_label_set_recolor(infoLabel, true);
 
   NetStatus n = netStatus();
@@ -193,7 +202,7 @@ void uiShowWifiSetup() {
     lv_obj_t *cancel = createButton(scr, "Cancelar", lv_color_hex(0x606060), 200, 60, restartEvent);
     lv_obj_align(cancel, LV_ALIGN_BOTTOM_LEFT, 20, -15);
   }
-  lv_obj_t *back = createButton(scr, LV_SYMBOL_HOME " Inicio", lv_palette_main(LV_PALETTE_BLUE), 200, 60, homeEvent);
+  lv_obj_t *back = createButton(scr, LV_SYMBOL_HOME " Início", lv_palette_main(LV_PALETTE_BLUE), 200, 60, homeEvent);
   lv_obj_align(back, LV_ALIGN_BOTTOM_RIGHT, -20, -15);
 
   loadScreen(scr, "wifi_setup", refreshWifiSetup);
@@ -203,13 +212,26 @@ void uiShowWifiSetup() {
 
 static void refreshSettings(lv_timer_t *) {
   NetStatus n = netStatus();
-  String wifi = n.mode == NetMode::Connected ? n.ssid + " (conectado)" : n.ssid + " (sem conexao, tentando...)";
-  String page = n.mode == NetMode::Connected ? "http://" + n.ip + "\n     ou http://painel.local" : "-";
-  String spotify = n.spotifyConfigured ? "configurado (autorizado em " + n.spotifyAuthDate + ")" : "nao configurado";
+  String wifi = n.mode == NetMode::Connected ? n.ssid + " (conectado)" : n.ssid + " (sem conexão, tentando...)";
+  String page = n.mode == NetMode::Connected ? "http://" + n.ip + "  ou  http://painel.local" : "-";
+  String spotify;
+  String expiry;
+  int daysLeft;
+  if (!n.spotifyConfigured) {
+    spotify = "não configurado";
+  } else if (spotifyNeedsReauth()) {
+    spotify = "#E74C3C Reautorize o Spotify#";
+  } else if (tokenExpiry(n.spotifyAuthDate, expiry, daysLeft)) {
+    spotify = "autorizado em " + n.spotifyAuthDate + ", vale até " + expiry;
+    if (daysLeft < 15) spotify += daysLeft < 0 ? "\n#E74C3C Expirou: renove a autorização#"
+                                               : "\n#E74C3C Faltam " + String(daysLeft) + " dias: renove a autorização#";
+  } else {
+    spotify = "autorizado em " + n.spotifyAuthDate;
+  }
   lv_label_set_text_fmt(infoLabel,
-                        "Configuracoes\n\n"
+                        "Configurações\n\n"
                         "Wi-Fi: %s\n"
-                        "Pagina de configuracao: %s\n"
+                        "Página: %s\n"
                         "PIN: #1DB954 %s#\n"
                         "Spotify: %s",
                         wifi.c_str(), page.c_str(), n.pin.c_str(), spotify.c_str());
@@ -227,7 +249,7 @@ static void settingsEvent(lv_event_t *) {
   }
   lv_obj_t *scr = createScreen();
   infoLabel = createInfoLabel(scr);
-  lv_obj_set_style_text_font(infoLabel, &lv_font_montserrat_20, 0);
+  lv_obj_set_style_text_font(infoLabel, &font_pt_20, 0);
   lv_label_set_recolor(infoLabel, true);
 
   lv_obj_t *change = createButton(scr, "Trocar Wi-Fi", lv_color_hex(0xE67E22), 200, 60, changeWifiEvent);
@@ -236,4 +258,120 @@ static void settingsEvent(lv_event_t *) {
   lv_obj_align(back, LV_ALIGN_BOTTOM_RIGHT, -20, -15);
 
   loadScreen(scr, "settings", refreshSettings);
+}
+
+// ---------- Spotify ----------
+
+static String formatTime(uint32_t ms) {
+  uint32_t s = ms / 1000;
+  char buf[12];
+  snprintf(buf, sizeof(buf), "%u:%02u", s / 60, s % 60);
+  return buf;
+}
+
+static void spotifyShowMessage(const char *msg) {
+  lv_label_set_text(spMessage, msg);
+  lv_obj_clear_flag(spMessage, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(spTitle, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(spArtist, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(spBar, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(spElapsed, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(spTotal, LV_OBJ_FLAG_HIDDEN);
+  lv_label_set_text(spDevice, "");
+}
+
+// Só troca o texto se mudou (evita redesenhar e reiniciar a rolagem do título)
+static void setTextIfChanged(lv_obj_t *label, const String &text) {
+  if (text != lv_label_get_text(label)) lv_label_set_text(label, text.c_str());
+}
+
+static void refreshSpotify(lv_timer_t *) {
+  SpPlayback p = spotifyPlayback();
+  switch (p.state) {
+    case SpState::Loading: spotifyShowMessage("Carregando..."); return;
+    case SpState::NotConfigured: spotifyShowMessage("Spotify não configurado.\nToque em " LV_SYMBOL_SETTINGS " na tela inicial para ver\no endereço da página de configuração."); return;
+    case SpState::NoWifi: spotifyShowMessage("Sem Wi-Fi.\nTentando reconectar..."); return;
+    case SpState::NeedsReauth: spotifyShowMessage("Reautorize o Spotify.\nVeja " LV_SYMBOL_SETTINGS " na tela inicial."); return;
+    case SpState::Error: spotifyShowMessage((p.error + "\nTentando de novo...").c_str()); return;
+    case SpState::NoDevice: spotifyShowMessage("Nenhum dispositivo tocando.\nComece a tocar no celular ou no computador."); return;
+    case SpState::Ok: break;
+  }
+  lv_obj_add_flag(spMessage, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(spTitle, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(spArtist, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(spBar, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(spElapsed, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(spTotal, LV_OBJ_FLAG_HIDDEN);
+
+  setTextIfChanged(spTitle, p.title);
+  setTextIfChanged(spArtist, p.artist);
+  setTextIfChanged(spDevice, String(p.isPlaying ? LV_SYMBOL_PLAY " " : LV_SYMBOL_PAUSE " ") + p.device);
+
+  // Entre as consultas (1 s) a barra anda sozinha
+  uint32_t progress = p.progressMs + (p.isPlaying ? millis() - p.fetchedAt : 0);
+  if (progress > p.durationMs) progress = p.durationMs;
+  lv_bar_set_range(spBar, 0, p.durationMs > 0 ? p.durationMs / 1000 : 1);
+  lv_bar_set_value(spBar, progress / 1000, LV_ANIM_OFF);
+  setTextIfChanged(spElapsed, formatTime(progress));
+  setTextIfChanged(spTotal, formatTime(p.durationMs));
+}
+
+static void spotifyLeave() {
+  spotifySetActive(false);
+}
+
+static void spotifyEvent(lv_event_t *) {
+  lv_obj_t *scr = createScreen();
+
+  lv_obj_t *back = createButton(scr, LV_SYMBOL_LEFT, lv_palette_main(LV_PALETTE_BLUE), 80, 50, homeEvent);
+  lv_obj_align(back, LV_ALIGN_TOP_LEFT, 10, 10);
+
+  spDevice = lv_label_create(scr);
+  lv_obj_set_width(spDevice, 360);
+  lv_label_set_long_mode(spDevice, LV_LABEL_LONG_DOT);
+  lv_obj_set_style_text_align(spDevice, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_style_text_color(spDevice, lv_color_hex(0x1DB954), 0);
+  lv_label_set_text(spDevice, "");
+  lv_obj_align(spDevice, LV_ALIGN_TOP_RIGHT, -15, 25);
+
+  spTitle = lv_label_create(scr);
+  lv_obj_set_width(spTitle, 450);
+  lv_obj_set_style_text_font(spTitle, &font_pt_28, 0);
+  lv_label_set_long_mode(spTitle, LV_LABEL_LONG_SCROLL_CIRCULAR);
+  lv_label_set_text(spTitle, "");
+  lv_obj_align(spTitle, LV_ALIGN_TOP_LEFT, 15, 100);
+
+  spArtist = lv_label_create(scr);
+  lv_obj_set_width(spArtist, 450);
+  lv_obj_set_style_text_font(spArtist, &font_pt_20, 0);
+  lv_obj_set_style_text_color(spArtist, lv_color_hex(0xB3B3B3), 0);
+  lv_label_set_long_mode(spArtist, LV_LABEL_LONG_DOT);
+  lv_label_set_text(spArtist, "");
+  lv_obj_align(spArtist, LV_ALIGN_TOP_LEFT, 15, 145);
+
+  spBar = lv_bar_create(scr);
+  lv_obj_set_size(spBar, 450, 10);
+  lv_obj_set_style_bg_color(spBar, lv_color_hex(0x404040), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(spBar, lv_color_white(), LV_PART_INDICATOR);
+  lv_obj_align(spBar, LV_ALIGN_TOP_MID, 0, 210);
+
+  spElapsed = lv_label_create(scr);
+  lv_label_set_text(spElapsed, "");
+  lv_obj_align(spElapsed, LV_ALIGN_TOP_LEFT, 15, 230);
+
+  spTotal = lv_label_create(scr);
+  lv_label_set_text(spTotal, "");
+  lv_obj_align(spTotal, LV_ALIGN_TOP_RIGHT, -15, 230);
+
+  spMessage = lv_label_create(scr);
+  lv_obj_set_width(spMessage, 440);
+  lv_obj_set_style_text_font(spMessage, &font_pt_20, 0);
+  lv_obj_set_style_text_align(spMessage, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_long_mode(spMessage, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(spMessage, "");
+  lv_obj_align(spMessage, LV_ALIGN_CENTER, 0, 20);
+
+  spotifySetActive(true);
+  loadScreen(scr, "spotify", refreshSpotify, 250);
+  onLeave = spotifyLeave;
 }

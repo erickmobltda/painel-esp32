@@ -24,3 +24,23 @@
 ## [2026-10-20] — Captura serial em background
 - **What happened**: capturei 10 min com saída só no final; ao encerrar o processo, o log se perdeu.
 - **Rule**: o script de captura deve escrever na saída em tempo real (flush) e não depender de terminar.
+
+## [2026-10-20] — Unidade do timeout no NetworkClientSecure (core 3.x)
+- **What happened**: `client.setTimeout(8)` achando que era segundos → 8 ms → toda conexão falhava com HTTP -1.
+- **Rule**: no core 3.x `setTimeout` é em **milissegundos**; deixar o `HTTPClient::setTimeout(ms)` cuidar disso.
+
+## [2026-10-20] — `NetworkClientSecure::stop()` apaga o vínculo com o CA bundle
+- **What happened**: depois do primeiro `stop()`, toda conexão falhava (HTTP -1). `stop_ssl_socket` faz `memset` do contexto, zerando `bundle_attach_cb`.
+- **Rule**: chamar `setCACertBundle(...)` antes de cada conexão nova num cliente reaproveitado (`if (!client.connected())`).
+
+## [2026-10-20] — Watchdog com HTTPClient em tarefa no núcleo 0
+- **What happened**: a placa reiniciava (task_wdt, IDLE0) durante `getString()`: o HTTPClient espera dados girando com `delay(0)`, que não cede a CPU para a IDLE.
+- **Rule**: tarefas de rede com HTTPClient ficam no **núcleo 1, prioridade 0** (watchdog não vigia IDLE1; loop/LVGL tem prioridade). Decodificar backtrace com `xtensa-esp32-elf-addr2line -pfiaC -e build/painel/painel.ino.elf <endereços>`.
+
+## [2026-10-20] — Logs: filtrar com grep esconde a causa
+- **What happened**: o filtro `grep "^\[|Guru|panic"` escondeu as linhas `E (...) task_wdt` do travamento.
+- **Rule**: em testes de estabilidade, capturar o serial sem filtro (só remover ruído conhecido) e usar `grep --line-buffered`.
+
+## [2026-10-20] — Testar sozinho antes de pedir teste ao usuário
+- **What happened**: pedi ao usuário 3 rodadas de teste para bugs que eu podia reproduzir.
+- **Rule**: usar o comando de depuração `s` pelo serial (e o script de captura com envio `T:c`) para validar a lógica antes; pedir ao usuário só o que exige o toque/olho humano.

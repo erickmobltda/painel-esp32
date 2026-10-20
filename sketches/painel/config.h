@@ -17,3 +17,5 @@ void configLoad(Config &cfg);
 void configSaveWifi(const String &ssid, const String &pass);
 void configSaveSpotify(const String &clientId, const String &clientSecret, const String &refreshToken,
                        const String &authDate);
+// O Spotify pode devolver um refresh token novo ao renovar o acesso; a data da autorização não muda.
+void configSaveRefreshToken(const String &refreshToken);

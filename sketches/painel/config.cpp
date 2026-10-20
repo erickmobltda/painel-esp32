@@ -57,3 +57,10 @@ void configSaveSpotify(const String &clientId, const String &clientSecret, const
   prefs.putString("sp_date", authDate);
   prefs.end();
 }
+
+void configSaveRefreshToken(const String &refreshToken) {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putString("sp_refresh", refreshToken);
+  prefs.end();
+}

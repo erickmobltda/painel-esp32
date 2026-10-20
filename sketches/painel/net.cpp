@@ -1,5 +1,7 @@
 #include "net.h"
 #include "config.h"
+#include "spotify.h"
+#include "clock.h"
 
 #include <WiFi.h>
 #include <WebServer.h>
@@ -9,6 +11,7 @@
 static const char *MDNS_NAME = "painel";
 static const uint8_t PIN_MAX_ATTEMPTS = 5;
 static const uint32_t PIN_LOCK_MS = 60000;
+static const uint32_t WIFI_RETRY_MS = 15000;
 
 static WebServer server(80);
 static DNSServer dns;
@@ -16,6 +19,7 @@ static Config cfg;
 static bool setupMode = false;
 static bool mdnsStarted = false;
 static String apSsid, apPass, pin;
+static String authState;  // "state" do OAuth: confere que o code colado veio de um login iniciado aqui
 static uint8_t pinFailures = 0;
 static uint32_t pinLockedAt = 0;
 static uint32_t restartAt = 0;
@@ -90,18 +94,27 @@ static void handleWifiSave() {
 
 // ---------- Modo conectado: credenciais do Spotify, protegidas por PIN ----------
 
-static String spotifyForm(const String &msg) {
-  String status = cfg.spRefreshToken.length() ? "configurado (autorizado em " + htmlEscape(cfg.spAuthDate) + ")"
-                                              : "não configurado";
-  return "<h2>Painel: Spotify</h2><p>Status: " + status + "</p>" + msg +
-         "<form method=post action=/spotify>"
+static String spotifyPage() {
+  String status = cfg.spRefreshToken.length() == 0 ? "não configurado"
+                  : spotifyNeedsReauth()            ? "<b>precisa reautorizar</b>"
+                                                    : "configurado (autorizado em " + htmlEscape(cfg.spAuthDate) + ")";
+  return "<h2>Painel: Spotify</h2><p>Status: " + status + "</p>"
+         "<form method=post action=/spotify/code>"
          "PIN (na tela ⚙ da placa):<input name=pin inputmode=numeric required autocomplete=off>"
-         "Client ID:<input name=client_id required autocomplete=off>"
+         "Client ID:<input name=client_id id=cid required autocomplete=off>"
          "Client Secret:<input name=client_secret type=password required autocomplete=off>"
-         "Refresh token:<input name=refresh_token type=password required autocomplete=off>"
-         "Data da autorização:<input name=auth_date type=date id=d required>"
-         "<button>Salvar</button></form>"
-         "<script>document.getElementById('d').valueAsDate=new Date()</script>";
+         "<button type=button onclick=login()>1. Abrir login do Spotify</button>"
+         "<p>Faça login e clique em <b>Concordo</b>. O navegador vai mostrar um erro "
+         "(\"não foi possível conectar\"): é esperado. Copie o endereço inteiro da barra "
+         "(começa com <code>" SPOTIFY_REDIRECT_URI "?code=</code>) e cole abaixo.</p>"
+         "Endereço da página de erro:<input name=callback_url required autocomplete=off>"
+         "<button>2. Salvar</button></form>"
+         "<script>function login(){var c=document.getElementById('cid').value.trim();"
+         "if(!c){alert('Preencha o Client ID');return}"
+         "window.open('https://accounts.spotify.com/authorize?response_type=code&client_id='+encodeURIComponent(c)"
+         "+'&scope='+encodeURIComponent('" SPOTIFY_SCOPES "')"
+         "+'&redirect_uri='+encodeURIComponent('" SPOTIFY_REDIRECT_URI "')"
+         "+'&state=" + authState + "','_blank')}</script>";
 }
 
 static bool pinLocked() {
@@ -111,18 +124,84 @@ static bool pinLocked() {
   return false;
 }
 
-static void handleSpotifySave() {
+// Confere o PIN; se falhar, já responde ao navegador/script.
+static bool checkPin() {
   if (pinLocked()) {
     server.send(429, "text/plain; charset=utf-8", "Muitas tentativas. Aguarde 1 minuto.");
-    return;
+    return false;
   }
   if (server.arg("pin") != pin) {
     if (++pinFailures >= PIN_MAX_ATTEMPTS) pinLockedAt = millis();
     Serial.printf("[net] PIN errado (%u/%u)\n", pinFailures, PIN_MAX_ATTEMPTS);
     server.send(403, "text/plain; charset=utf-8", "PIN incorreto.");
-    return;
+    return false;
   }
   pinFailures = 0;
+  return true;
+}
+
+static void saveSpotify(const String &id, const String &secret, const String &token, const String &date) {
+  configSaveSpotify(id, secret, token, date);
+  configLoad(cfg);
+  spotifyReloadConfig();
+  Serial.printf("[net] credenciais do Spotify salvas (autorizado em %s)\n", date.c_str());
+}
+
+// Valor de um parâmetro da query string de uma URL colada (sem decodificar: code/state são URL-safe).
+static String queryParam(const String &url, const String &name) {
+  int q = url.indexOf('?');
+  if (q < 0) return "";
+  String query = "&" + url.substring(q + 1);
+  int p = query.indexOf("&" + name + "=");
+  if (p < 0) return "";
+  p += name.length() + 2;
+  int end = query.indexOf('&', p);
+  int hash = query.indexOf('#', p);
+  if (hash >= 0 && (end < 0 || hash < end)) end = hash;
+  return end < 0 ? query.substring(p) : query.substring(p, end);
+}
+
+// Fluxo pela página: troca o code do login por um refresh token aqui mesmo na placa.
+static void handleSpotifyCode() {
+  if (!checkPin()) return;
+  String id = server.arg("client_id"), secret = server.arg("client_secret"), url = server.arg("callback_url");
+  id.trim();
+  secret.trim();
+  url.trim();
+  String back = "<p><a href=/>Voltar</a></p>";
+  if (queryParam(url, "error").length()) {
+    sendPage(400, "<p>O Spotify recusou: " + htmlEscape(queryParam(url, "error")) + "</p>" + back);
+    return;
+  }
+  String code = queryParam(url, "code");
+  if (id.length() == 0 || secret.length() == 0 || code.length() == 0) {
+    sendPage(400, "<p>Faltou o Client ID, o Client Secret ou o endereço com <code>?code=</code>.</p>" + back);
+    return;
+  }
+  if (queryParam(url, "state") != authState) {
+    sendPage(400, "<p>Esse endereço não veio do login aberto por esta página. Recarregue e tente de novo.</p>" + back);
+    return;
+  }
+  String today = clockToday();
+  if (today.length() == 0) {
+    sendPage(503, "<p>O relógio da placa ainda não sincronizou pela internet. Tente de novo em alguns segundos "
+                  "(o code vale por poucos minutos).</p>" + back);
+    return;
+  }
+  String refresh, error;
+  if (!spotifyExchangeCode(id, secret, code, refresh, error)) {
+    sendPage(502, "<p>Falha ao trocar o código: " + htmlEscape(error) +
+                      "</p><p>Confira Client ID/Secret e se a Redirect URI no app é exatamente <code>" SPOTIFY_REDIRECT_URI
+                      "</code>. O código só vale uma vez: refaça o passo 1.</p>" + back);
+    return;
+  }
+  saveSpotify(id, secret, refresh, today);
+  sendPage(200, "<p>Pronto! Spotify autorizado em " + today + ". Pode abrir a tela do Spotify na placa.</p>");
+}
+
+// Fluxo pelo script tools/spotify_auth.py: recebe o refresh token já pronto.
+static void handleSpotifySave() {
+  if (!checkPin()) return;
   String id = server.arg("client_id"), secret = server.arg("client_secret"), token = server.arg("refresh_token");
   String date = server.arg("auth_date");
   id.trim();
@@ -132,10 +211,8 @@ static void handleSpotifySave() {
     server.send(400, "text/plain; charset=utf-8", "Campos obrigatórios faltando.");
     return;
   }
-  configSaveSpotify(id, secret, token, date);
-  configLoad(cfg);
-  Serial.printf("[net] credenciais do Spotify salvas (autorizado em %s)\n", date.c_str());
-  // O script tools/spotify_auth.py lê o código 200 e o texto "OK"
+  saveSpotify(id, secret, token, date);
+  // O script lê o código 200 e o texto "OK"
   server.send(200, "text/plain; charset=utf-8", "OK");
 }
 
@@ -143,7 +220,7 @@ static void handleSpotifySave() {
 
 static void handleRoot() {
   if (setupMode) sendPage(200, wifiForm());
-  else sendPage(200, spotifyForm(""));
+  else sendPage(200, spotifyPage());
 }
 
 static void handleNotFound() {
@@ -166,6 +243,10 @@ static void startServer() {
     });
     server.on("/spotify", HTTP_POST, [] {
       if (!setupMode) handleSpotifySave();
+      else server.send(403, "text/plain", "Configure o Wi-Fi primeiro");
+    });
+    server.on("/spotify/code", HTTP_POST, [] {
+      if (!setupMode) handleSpotifyCode();
       else server.send(403, "text/plain", "Configure o Wi-Fi primeiro");
     });
     server.onNotFound(handleNotFound);
@@ -194,6 +275,7 @@ void netStartSetup() {
 void netBegin() {
   configLoad(cfg);
   pin = randomDigits(6);
+  authState = randomDigits(16);
   if (cfg.wifiSsid.length() == 0) {
     netStartSetup();
     return;
@@ -201,6 +283,7 @@ void netBegin() {
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
   WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+  clockBegin();
   startServer();
   Serial.printf("[net] conectando em %s\n", cfg.wifiSsid.c_str());
 }
@@ -212,7 +295,16 @@ void netLoop() {
   if (restartAt && (int32_t)(millis() - restartAt) >= 0) ESP.restart();
 
   static wl_status_t last = WL_IDLE_STATUS;
+  static uint32_t lastAttempt = millis();
   wl_status_t now = WiFi.status();
+  // O auto-reconnect do core só age quando uma conexão já feita cai; se a tentativa
+  // inicial falhar (ex.: roteador recusou), tenta de novo periodicamente.
+  if (!setupMode && now != WL_CONNECTED && millis() - lastAttempt > WIFI_RETRY_MS) {
+    lastAttempt = millis();
+    Serial.println("[net] nova tentativa de conexao Wi-Fi");
+    WiFi.disconnect();
+    WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+  }
   if (!setupMode && now != last) {
     last = now;
     if (now == WL_CONNECTED) {

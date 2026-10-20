@@ -80,14 +80,15 @@ bool displayInit() {
 
   uint32_t w = gfx->width();
   uint32_t h = gfx->height();
-  uint32_t bufSize = w * 80;
-  lv_color_t *buf1 = (lv_color_t *)heap_caps_malloc(bufSize * 2, MALLOC_CAP_8BIT);
-  lv_color_t *buf2 = (lv_color_t *)heap_caps_malloc(bufSize * 2, MALLOC_CAP_8BIT);
-  if (!buf1 || !buf2) {
-    Serial.println("[display] falha ao alocar buffers do LVGL");
+  // Um único buffer de 40 linhas na RAM interna: o envio pela SPI é bloqueante (flush_ready logo após
+  // desenhar), então um segundo buffer nunca seria usado em paralelo e só gastaria RAM interna (o TLS precisa dela).
+  uint32_t bufSize = w * 40;
+  lv_color_t *buf = (lv_color_t *)heap_caps_malloc(bufSize * sizeof(lv_color_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!buf) {
+    Serial.println("[display] falha ao alocar buffer do LVGL");
     return false;
   }
-  lv_disp_draw_buf_init(&drawBuf, buf1, buf2, bufSize);
+  lv_disp_draw_buf_init(&drawBuf, buf, nullptr, bufSize);
 
   lv_disp_drv_init(&dispDrv);
   dispDrv.hor_res = w;
