@@ -31,12 +31,17 @@ void loop() {
   lv_timer_handler();
   netLoop();
 
-  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela
-  if (Serial.available() && Serial.read() == 's') {
-    static bool debugActive = false;
-    debugActive = !debugActive;
-    Serial.printf("[debug] spotify ativo=%d\n", debugActive);
-    spotifySetActive(debugActive);
+  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela; 'q' busca a fila
+  if (Serial.available()) {
+    char c = Serial.read();
+    if (c == 's') {
+      static bool debugActive = false;
+      debugActive = !debugActive;
+      Serial.printf("[debug] spotify ativo=%d\n", debugActive);
+      spotifySetActive(debugActive);
+    } else if (c == 'q') {
+      spotifyRequestQueue(true);
+    }
   }
   delay(5);
 }

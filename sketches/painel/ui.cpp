@@ -392,6 +392,8 @@ static void spotifyLeave() {
   spotifySetActive(false);
 }
 
+static void queueEvent(lv_event_t *);
+
 static lv_obj_t *createLabel(lv_obj_t *parent, const lv_font_t *font, lv_coord_t w, lv_label_long_mode_t mode) {
   lv_obj_t *label = lv_label_create(parent);
   if (font) lv_obj_set_style_text_font(label, font, 0);
@@ -465,10 +467,12 @@ static void spotifyEvent(lv_event_t *) {
   // Topo: voltar e aparelho tocando (fora do spContent: sempre visíveis)
   lv_obj_t *back = createButton(scr, LV_SYMBOL_LEFT, lv_palette_main(LV_PALETTE_BLUE), 70, 50, homeEvent);
   lv_obj_align(back, LV_ALIGN_TOP_LEFT, 10, 8);
-  spDevice = createLabel(scr, nullptr, 370, LV_LABEL_LONG_DOT);
+  lv_obj_t *queueBtn = createButton(scr, LV_SYMBOL_LIST, lv_color_hex(0x404040), 70, 50, queueEvent);
+  lv_obj_align(queueBtn, LV_ALIGN_TOP_RIGHT, -10, 8);
+  spDevice = createLabel(scr, nullptr, 300, LV_LABEL_LONG_DOT);
   lv_obj_set_style_text_align(spDevice, LV_TEXT_ALIGN_RIGHT, 0);
   lv_obj_set_style_text_color(spDevice, lv_color_hex(0x1DB954), 0);
-  lv_obj_align(spDevice, LV_ALIGN_TOP_RIGHT, -15, 24);
+  lv_obj_align(spDevice, LV_ALIGN_TOP_RIGHT, -90, 24);
 
   spMessage = createLabel(scr, &font_pt_20, 440, LV_LABEL_LONG_WRAP);
   lv_obj_set_style_text_align(spMessage, LV_TEXT_ALIGN_CENTER, 0);
@@ -476,5 +480,92 @@ static void spotifyEvent(lv_event_t *) {
 
   spotifySetActive(true);
   loadScreen(scr, "spotify", refreshSpotify, 250);
+  onLeave = spotifyLeave;
+}
+
+// ---------- Fila ----------
+
+static lv_obj_t *queueList = nullptr, *queueMessage = nullptr;
+static uint32_t queueVersionShown = 0;
+static uint32_t queueRequestedAt = 0;
+static const uint32_t QUEUE_REFRESH_MS = 10000;
+
+static void refreshQueue(lv_timer_t *) {
+  if (millis() - queueRequestedAt > QUEUE_REFRESH_MS) {
+    queueRequestedAt = millis();
+    spotifyRequestQueue(false);
+  }
+  SpQueue q = spotifyQueue();
+  if (q.version == queueVersionShown) return;
+  queueVersionShown = q.version;
+
+  const char *message = !q.loaded        ? "Carregando fila..."
+                        : q.failed       ? "Não foi possível carregar a fila.\nTentando de novo..."
+                        : q.items.empty() ? "A fila está vazia."
+                                         : nullptr;
+  if (message) {
+    lv_label_set_text(queueMessage, message);
+    lv_obj_clear_flag(queueMessage, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(queueList, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  lv_obj_add_flag(queueMessage, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_clear_flag(queueList, LV_OBJ_FLAG_HIDDEN);
+
+  // Mantém a rolagem ao atualizar
+  lv_coord_t scrollY = lv_obj_get_scroll_y(queueList);
+  lv_obj_clean(queueList);
+  int n = 1;
+  for (const SpQueueItem &item : q.items) {
+    lv_obj_t *row = lv_obj_create(queueList);
+    lv_obj_remove_style_all(row);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_ver(row, 6, 0);
+    lv_obj_set_style_border_side(row, LV_BORDER_SIDE_BOTTOM, 0);
+    lv_obj_set_style_border_width(row, 1, 0);
+    lv_obj_set_style_border_color(row, lv_color_hex(0x303030), 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_CLICKABLE);  // o toque rola a lista
+    lv_obj_t *title = createLabel(row, &font_pt_20, 440, LV_LABEL_LONG_DOT);
+    lv_label_set_text_fmt(title, "%d. %s", n++, item.title.c_str());
+    lv_obj_t *artist = createLabel(row, nullptr, 440, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_color(artist, lv_color_hex(0xB3B3B3), 0);
+    lv_label_set_text(artist, item.artist.c_str());
+    lv_obj_set_pos(artist, 0, 26);
+  }
+  lv_obj_update_layout(queueList);
+  lv_obj_scroll_to_y(queueList, scrollY, LV_ANIM_OFF);
+}
+
+static void queueBackEvent(lv_event_t *) {
+  onLeave = nullptr;  // volta ao Spotify sem fechar as conexões
+  spotifyEvent(nullptr);
+}
+
+static void queueEvent(lv_event_t *) {
+  onLeave = nullptr;  // a consulta continua ativa enquanto a fila está aberta
+  lv_obj_t *scr = createScreen();
+
+  lv_obj_t *back = createButton(scr, LV_SYMBOL_LEFT, lv_palette_main(LV_PALETTE_BLUE), 70, 50, queueBackEvent);
+  lv_obj_align(back, LV_ALIGN_TOP_LEFT, 10, 8);
+  lv_obj_t *title = createLabel(scr, &font_pt_28, 0, LV_LABEL_LONG_CLIP);
+  lv_label_set_text(title, "Fila");
+  lv_obj_align(title, LV_ALIGN_TOP_LEFT, 100, 16);
+
+  queueList = lv_obj_create(scr);
+  lv_obj_remove_style_all(queueList);
+  lv_obj_set_size(queueList, 460, 250);
+  lv_obj_align(queueList, LV_ALIGN_TOP_LEFT, 15, 66);
+  lv_obj_set_flex_flow(queueList, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_scroll_dir(queueList, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(queueList, LV_SCROLLBAR_MODE_ACTIVE);
+
+  queueMessage = createLabel(scr, &font_pt_20, 440, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(queueMessage, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(queueMessage, LV_ALIGN_CENTER, 0, 20);
+
+  spotifyRequestQueue(true);
+  queueRequestedAt = millis();
+  queueVersionShown = UINT32_MAX;
+  loadScreen(scr, "fila", refreshQueue, 250);
   onLeave = spotifyLeave;
 }

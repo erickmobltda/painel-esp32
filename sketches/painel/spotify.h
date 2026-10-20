@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <vector>
 
 #define SPOTIFY_REDIRECT_URI "http://127.0.0.1:8888/callback"
 #define SPOTIFY_SCOPES "user-read-playback-state user-read-currently-playing user-modify-playback-state"
@@ -29,6 +30,17 @@ struct SpPlayback {
 
 enum class SpCmd { Play, Pause, Next, Previous, Seek };
 
+struct SpQueueItem {
+  String title, artist;
+};
+
+struct SpQueue {
+  bool loaded = false;  // false = ainda buscando
+  bool failed = false;
+  uint32_t version = 0;  // muda a cada resposta (a tela só redesenha a lista quando muda)
+  std::vector<SpQueueItem> items;
+};
+
 // Cria a tarefa (núcleo 1) que conversa com a API. Requer configLoad/NVS já disponível.
 void spotifyBegin();
 // Consulta o player a cada ~1 s só enquanto a tela do Spotify estiver aberta.
@@ -44,6 +56,11 @@ void spotifyCommand(SpCmd cmd, uint32_t positionMs = 0);
 // Capa do álbum (RGB565, ~150x150, na PSRAM). Devolve true se a capa mudou desde a última chamada;
 // pixels == nullptr significa "sem capa". A posse do buffer passa para quem chamou (liberar com free()).
 bool spotifyTakeArt(uint16_t *&pixels, int &w, int &h);
+
+// Fila: pede uma busca nova (a tarefa responde em ~1 s) e lê o último resultado.
+// clear = true descarta o resultado anterior (tela recém-aberta mostra "Carregando").
+void spotifyRequestQueue(bool clear);
+SpQueue spotifyQueue();
 
 // Troca o "code" do login (fluxo pela página da placa) por um refresh token. Bloqueia ~1-2 s.
 bool spotifyExchangeCode(const String &clientId, const String &clientSecret, const String &code,

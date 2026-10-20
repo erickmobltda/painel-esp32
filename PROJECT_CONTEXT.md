@@ -14,7 +14,9 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   tela do Spotify mostra música/artista/aparelho/progresso. Usuário confirmou: tocar, pausar, trocar música, voltar, ⚙ com validade.
 - **Etapa 5 concluída (2026-10-20)**: controles ⏮ ⏯ ⏭, slider de seek arrastável e **capa do álbum** (a etapa 10
   foi antecipada para cá por decisão do usuário). Usuário confirmou na placa.
-- Próxima: **Etapa 6** — fila.
+- **Etapa 6 concluída (2026-10-20)**: fila (botão ☰ na tela do Spotify → tela "Fila", até 20 itens, nome + artista,
+  rolagem por toque, atualiza a cada 10 s). Usuário confirmou na placa.
+- Próxima: **Etapa 7** — Jogo: resumo do HTML para aprovação. (Pendente de decisão: tocar uma música da fila ao tocar nela.)
 - **Etapa 12 (nova, última, pedido do usuário)**: investigar e melhorar desempenho do Spotify (ver "Pendências de desempenho").
 
 ## Estrutura do sketch `sketches/painel`
@@ -48,6 +50,8 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 - Comandos (`spotifyCommand`): fila FreeRTOS → a tarefa executa (PUT play/pause/seek, POST next/previous) e consulta
   logo depois; a tela atualiza o estado local na hora (ícone, posição). Cabeçalho `Content-Length: 0` adicionado à mão
   (o HTTPClient não manda com corpo vazio). 403/404/429 viram aviso laranja por 3 s.
+- Fila: `GET /v1/me/player/queue` (~53 KB para 20 itens, String na PSRAM) com filtro (nome, artistas, show); a consulta
+  continua ativa ao ir Spotify ↔ Fila (`onLeave = nullptr` na navegação entre as duas). Depuração: `q` pelo serial busca a fila.
 - Capa: menor imagem ≥150 px (normalmente a de 300) baixada de `i.scdn.co` numa **segunda conexão TLS mantida aberta**,
   decodificada com o TJpgDec do LVGL (`LV_USE_SJPG 1`, escala 1/2 → 150x150, RGB888→RGB565) para a PSRAM; a tela recebe
   o buffer por `spotifyTakeArt` (contador de versão) e libera ao trocar/fechar. Falha no download → nova tentativa em 10 s.

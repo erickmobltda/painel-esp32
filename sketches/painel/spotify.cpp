@@ -14,6 +14,8 @@ extern const uint8_t x509_crt_bundle_end[] asm("_binary_x509_crt_bundle_end");
 
 static const char *TOKEN_URL = "https://accounts.spotify.com/api/token";
 static const char *API_URL = "https://api.spotify.com/v1/me/player";
+static const char *QUEUE_URL = "https://api.spotify.com/v1/me/player/queue";
+static const size_t QUEUE_MAX_ITEMS = 20;
 static const char *PLAYER_URL = "https://api.spotify.com/v1/me/player?additional_types=track,episode&market=from_token";
 static const int ART_SIZE = 150;            // lado da capa na tela (px)
 static const int ART_MAX_BYTES = 300000;    // JPEG baixado (as capas de 300 px têm ~20-40 KB)
@@ -42,6 +44,9 @@ static uint32_t artRetryAt = 0;          // download falhou: nova tentativa a pa
 static uint16_t *pendingArt = nullptr;     // capa aguardando a tela buscar (stateMutex); nullptr = sem capa
 static int pendingArtW = 0, pendingArtH = 0;
 static uint32_t artVersion = 0, artVersionTaken = 0;  // (stateMutex)
+
+static volatile bool queueRequested = false;
+static SpQueue queue;  // (stateMutex)
 
 static String accessToken;  // só usado pela tarefa
 static uint32_t accessTokenExpiresAt = 0;
@@ -277,6 +282,46 @@ static uint32_t pollOnce(NetworkClientSecure &client, HTTPClient &http) {
   }
 }
 
+// GET /v1/me/player/queue: a resposta traz os objetos completos das músicas (~5 KB cada, vai para a PSRAM);
+// o filtro do ArduinoJson guarda só nome e artistas.
+static void fetchQueue(NetworkClientSecure &client, HTTPClient &http) {
+  String body, retryAfter;
+  int code = apiRequest(client, http, "GET", QUEUE_URL, body, retryAfter);
+  SpQueue result;
+  result.loaded = true;
+  if (code == 200) {
+    JsonDocument filter;
+    filter["queue"][0]["name"] = true;
+    filter["queue"][0]["artists"][0]["name"] = true;
+    filter["queue"][0]["show"]["name"] = true;  // podcast
+    JsonDocument doc;
+    DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
+    if (err) {
+      Serial.printf("[spotify] fila: JSON invalido (%s)\n", err.c_str());
+      result.failed = true;
+    }
+    for (JsonObject item : doc["queue"].as<JsonArray>()) {
+      if (result.items.size() >= QUEUE_MAX_ITEMS) break;
+      SpQueueItem q;
+      q.title = item["name"] | "";
+      for (JsonObject a : item["artists"].as<JsonArray>()) {
+        if (q.artist.length()) q.artist += ", ";
+        q.artist += a["name"].as<const char *>();
+      }
+      if (q.artist.length() == 0) q.artist = item["show"]["name"] | "";
+      result.items.push_back(q);
+    }
+    Serial.printf("[spotify] fila: %u itens (%u bytes)\n", result.items.size(), body.length());
+  } else if (code != 204) {  // 204 = nada tocando: fila vazia
+    if (code == 401) accessToken = "";
+    result.failed = true;
+  }
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  result.version = queue.version + 1;
+  queue = result;
+  xSemaphoreGive(stateMutex);
+}
+
 static void setNotice(const String &text) {
   xSemaphoreTake(stateMutex, portMAX_DELAY);
   playback.notice = text;
@@ -472,6 +517,10 @@ static void spotifyTask(void *) {
       artReload = false;
       fetchArt(artClient, artHttp, artUrl);
     }
+    if (queueRequested) {
+      queueRequested = false;
+      fetchQueue(client, http);
+    }
 
     static UBaseType_t minFree = UINT32_MAX;
     UBaseType_t free = uxTaskGetStackHighWaterMark(nullptr);
@@ -496,12 +545,14 @@ void spotifyBegin() {
 }
 
 void spotifySetActive(bool on) {
+  bool wasActive = active;
   active = on;
   // Economia de energia do Wi-Fi (modem sleep) atrasa cada ida-e-volta até o próximo beacon do roteador:
   // desligada só enquanto a tela do Spotify está aberta
   WiFi.setSleep(!on);
   if (on) {
-    setState(SpState::Loading);
+    // Vindo da fila a consulta já estava rodando: não volta para "Carregando..."
+    if (!wasActive) setState(SpState::Loading);
     artReload = true;  // a tela é nova: busca a capa de novo mesmo que a música seja a mesma
   }
   xTaskNotifyGive(taskHandle);
@@ -575,4 +626,23 @@ bool spotifyExchangeCode(const String &clientId, const String &clientSecret, con
                         : "HTTP " + String(status) + " " + (resp["error"] | "") + " " + (resp["error_description"] | "");
   Serial.printf("[spotify] troca do code falhou: %s\n", errorOut.c_str());
   return false;
+}
+
+void spotifyRequestQueue(bool clear) {
+  if (clear) {
+    xSemaphoreTake(stateMutex, portMAX_DELAY);
+    queue.loaded = false;
+    queue.items.clear();
+    queue.version++;
+    xSemaphoreGive(stateMutex);
+  }
+  queueRequested = true;
+  xTaskNotifyGive(taskHandle);
+}
+
+SpQueue spotifyQueue() {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  SpQueue copy = queue;
+  xSemaphoreGive(stateMutex);
+  return copy;
 }
