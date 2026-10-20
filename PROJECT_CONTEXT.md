@@ -18,7 +18,9 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   rolagem por toque, atualiza a cada 10 s). Usuário confirmou na placa.
 - (Tocar uma música da fila ao tocar nela: explicado ao usuário — pular N vezes ou `PUT /play` com contexto+offset — não incluído por ora.)
 - **Etapa 7 concluída (2026-10-20)**: Capitã Maeva portada (gráficos + controles, sem som). ~20 FPS jogando. Usuário confirmou.
-- Próxima: **Etapa 8** — sons do jogo (decidir com o usuário: só efeitos ou também música).
+- **Etapa 8 concluída (2026-10-20)**: sons do jogo sintetizados na placa (música + efeitos), mudo no jogo, volume na ⚙.
+  Usuário confirmou.
+- Próxima: **Etapa 9** — energia (escurecer/apagar tela na bateria) + robustez (sem Wi-Fi, Spotify fora, nada tocando).
 - **Etapa 12 (nova, última, pedido do usuário)**: investigar e melhorar desempenho do Spotify (ver "Pendências de desempenho").
 
 ## Estrutura do sketch `sketches/painel`
@@ -74,9 +76,21 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   Nuvens/morros como "trechos opacos" (memcpy); sprites ampliados uma vez; `#pragma GCC optimize("O2")` no game.cpp.
 - Tela: barramento **Arduino_ESP32SPIDMA a 80 MHz, sem MISO** (o driver do ESP-IDF limita a 26,7 MHz com MISO); o jogo
   inverte os bytes da faixa e envia com `draw16bitBeRGBBitmap` (DMA direto do buffer). Envio 32 ms + desenho ~15 ms = ~20 FPS.
-  ⚠️ Etapa 8: o SD (CS 15) divide SCK/MOSI/MISO com a tela; o barramento da tela está sem MISO → planejar o acesso ao SD.
+  ⚠️ O SD (CS 15) divide SCK/MOSI/MISO com a tela e o barramento da tela está sem MISO: hoje nada usa o SD.
+  Para usar o SD (ex.: cache de capas da etapa 12) será preciso planejar o compartilhamento do barramento.
 - Usuário: as animações da tela de título do jogo podem ser reduzidas se precisar de desempenho.
 - Depuração: `g` pelo serial abre o jogo.
+
+## Som — `sound.cpp`, `es8311.*` (driver oficial copiado do exemplo 04_es8311_example)
+- Decisão do usuário (2026-10-20): **sintetizar na placa** em vez de WAVs no SD (desvio do briefing; não existe `sd_card/`).
+  Port do `createSound()` do HTML: mesmas notas (TITLE 132 BPM, GAME 164 BPM), ondas, rampas (Param = setValueAtTime/
+  linear/exponential), ruído com passa-altas (Q 1 dB), kick/snare, barramentos (música 0,8 com fade 0,03 s/300 ms).
+- Codec ES8311 via `Wire` (I2C 0x18), 48 kHz, RESOLUTION_32 (mesma config do exemplo oficial); I2S do core (`ESP_I2S`):
+  BCLK 2, LRCK 4, DOUT 12; amplificador = TCA9554 pino 2 (`displaySetAmplifier`).
+- Tarefa "som" no **núcleo 0** (prio 3): recebe pedidos numa fila, agenda as vozes (32) e mistura blocos de 256 amostras.
+  O jogo só chama `soundPlay(Snd::Jump)` etc. — nunca bloqueia.
+- `soundEnable(true/false)`: I2S + tarefa + amplificador só no jogo e na ⚙ (~12 KB de RAM interna e bateria).
+- Volume (0–100, padrão 80) e mudo do jogo na NVS (`volume`, `game_mute`). Slider na ⚙ toca bipe ao soltar.
 
 ## Pendências de desempenho (Etapa 12)
 Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a capa baixa em 0,07 s):
@@ -115,8 +129,9 @@ Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a c
 - LVGL com **1 buffer de 480x40** (38 KB, RAM interna) — decisão do usuário; o flush é bloqueante, então 2 buffers não ajudavam.
 - Com Wi-Fi conectado, na home: ~155 KB livres (maior bloco ~110 KB). Na tela do Spotify com as 2 conexões TLS: ~53 KB (maior ~30 KB).
 - PSRAM livre ~2 MB (Strings > 4 KB vão para a PSRAM: `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`).
-- Programa: 2,14 MB de 3 MB (68%) — o atlas do jogo ocupa ~420 KB.
-- No jogo (Wi-Fi desligado): heap interno ~136 KB livres (maior bloco ~74 KB), PSRAM ~1,83 MB.
+- Programa: 2,18 MB de 3 MB (69%) — o atlas do jogo ocupa ~420 KB.
+- No jogo (Wi-Fi desligado, som ligado): heap interno ~115 KB livres (maior bloco ~63 KB), PSRAM ~1,83 MB.
+- Home: ~135 KB livres (o barramento DMA da tela custa ~6 KB).
 - Bateria: % do AXP2101 parece baixa para a tensão (14% @ 3,82 V); o chip calibra após um ciclo completo (comentário do exemplo oficial).
 
 ## Placa (confirmado com `esptool flash-id`)

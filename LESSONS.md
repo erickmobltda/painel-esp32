@@ -69,3 +69,7 @@
 ## [2026-10-20] — Toques fora dos botões no título/game over
 - **What happened**: no game over, tocar em "TENTAR DE NOVO" não fazia nada (só os botões valiam).
 - **Rule**: ao restringir controles, manter o comportamento do original fora da jogabilidade (no original o canvas inteiro chama pressJump).
+
+## [2026-10-20] — Recursos só quando a tela precisa
+- **What happened**: ligar I2S + mixer no boot consumiu ~12 KB de RAM interna, que faltaria na tela do Spotify (2 sessões TLS).
+- **Rule**: medir o heap antes/depois de cada subsistema novo; ligar periféricos (I2S, amplificador, TLS) só nas telas que usam.

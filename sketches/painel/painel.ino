@@ -9,6 +9,7 @@
 #include "spotify.h"
 #include "ui.h"
 #include "game.h"
+#include "sound.h"
 
 void setup() {
   Serial.begin(115200);
@@ -20,6 +21,7 @@ void setup() {
     while (true) delay(1000);
   }
   powerInit();  // sem PMU a tela ainda funciona, só sem bateria
+  soundBegin();
 
   netBegin();
   spotifyBegin();

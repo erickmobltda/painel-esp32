@@ -49,6 +49,10 @@ uint8_t displayReadTouch(int16_t *x, int16_t *y, uint8_t max) {
   return n;
 }
 
+void displaySetAmplifier(bool on) {
+  tca.write1(TCA_PIN_AMP, on ? 1 : 0);
+}
+
 Arduino_GFX *displayGfx() {
   return gfx;
 }
@@ -69,6 +73,8 @@ bool displayInit() {
   tca.begin();
   tca.pinMode1(TCA_PIN_LCD_RST, OUTPUT);
   tca.pinMode1(TCA_PIN_TOUCH_RST, OUTPUT);
+  tca.pinMode1(TCA_PIN_AMP, OUTPUT);
+  tca.write1(TCA_PIN_AMP, 0);
   tca.write1(TCA_PIN_LCD_RST, 1);
   tca.write1(TCA_PIN_TOUCH_RST, 1);
   delay(10);

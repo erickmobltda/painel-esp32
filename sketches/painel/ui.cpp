@@ -5,6 +5,7 @@
 #include "clock.h"
 #include "fonts.h"
 #include "game.h"
+#include "sound.h"
 
 #include <Arduino.h>
 #include <lvgl.h>
@@ -234,6 +235,22 @@ static void changeWifiEvent(lv_event_t *) {
   uiShowWifiSetup();
 }
 
+static void volumeEvent(lv_event_t *e) {
+  lv_obj_t *slider = lv_event_get_target(e);
+  lv_obj_t *label = (lv_obj_t *)lv_event_get_user_data(e);
+  int v = lv_slider_get_value(slider);
+  if (lv_event_get_code(e) == LV_EVENT_VALUE_CHANGED) {
+    lv_label_set_text_fmt(label, "Volume: %d%%", v);
+  } else {  // soltou: aplica, salva e toca um bipe de teste
+    soundSetVolume(v);
+    soundPlay(Snd::Beep);
+  }
+}
+
+static void settingsLeave() {
+  soundEnable(false);
+}
+
 static void settingsEvent(lv_event_t *) {
   if (netStatus().mode == NetMode::Setup) {
     uiShowWifiSetup();
@@ -244,12 +261,27 @@ static void settingsEvent(lv_event_t *) {
   lv_obj_set_style_text_font(infoLabel, &font_pt_20, 0);
   lv_label_set_recolor(infoLabel, true);
 
+  // Volume do alto-falante (codec ES8311), salvo na NVS
+  lv_obj_t *volLabel = lv_label_create(scr);
+  lv_label_set_text_fmt(volLabel, "Volume: %d%%", soundVolume());
+  lv_obj_align(volLabel, LV_ALIGN_BOTTOM_LEFT, 20, -95);
+  lv_obj_t *vol = lv_slider_create(scr);
+  lv_slider_set_range(vol, 0, 100);
+  lv_slider_set_value(vol, soundVolume(), LV_ANIM_OFF);
+  lv_obj_set_size(vol, 280, 12);
+  lv_obj_align(vol, LV_ALIGN_BOTTOM_RIGHT, -30, -98);
+  lv_obj_set_ext_click_area(vol, 20);
+  lv_obj_add_event_cb(vol, volumeEvent, LV_EVENT_VALUE_CHANGED, volLabel);
+  lv_obj_add_event_cb(vol, volumeEvent, LV_EVENT_RELEASED, volLabel);
+
   lv_obj_t *change = createButton(scr, "Trocar Wi-Fi", lv_color_hex(0xE67E22), 200, 60, changeWifiEvent);
   lv_obj_align(change, LV_ALIGN_BOTTOM_LEFT, 20, -15);
   lv_obj_t *back = createButton(scr, LV_SYMBOL_LEFT " Voltar", lv_palette_main(LV_PALETTE_BLUE), 200, 60, homeEvent);
   lv_obj_align(back, LV_ALIGN_BOTTOM_RIGHT, -20, -15);
 
+  soundEnable(true);  // para o bipe de teste do volume
   loadScreen(scr, "settings", refreshSettings);
+  onLeave = settingsLeave;
 }
 
 // ---------- Spotify ----------

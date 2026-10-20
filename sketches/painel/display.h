@@ -11,3 +11,5 @@ class Arduino_GFX;
 Arduino_GFX *displayGfx();
 // Lê até `max` toques (o FT6336 suporta 2) já nas coordenadas da tela rotacionada. Devolve quantos.
 uint8_t displayReadTouch(int16_t *x, int16_t *y, uint8_t max);
+// Amplificador do alto-falante (pino do expansor TCA9554, que este módulo já controla).
+void displaySetAmplifier(bool on);

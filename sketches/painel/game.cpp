@@ -5,6 +5,7 @@
 #include "game_atlas.h"
 #include "display.h"
 #include "net.h"
+#include "sound.h"
 
 #include <Arduino.h>
 #include <Arduino_GFX_Library.h>
@@ -475,9 +476,9 @@ static const AtlasFrame *bframe(const char *name) {
 }
 
 /* ================= SOUND ================= */
-// Etapa 8: os sons do original (Web Audio) viram WAVs no cartão SD. Por enquanto, sem som.
-enum class Sfx { Jump, Duck, Land, Hit, Start, GameOver };
-static void sfx(Sfx) {}
+// Sintetizado em sound.cpp (port do createSound() do original); aqui só os pedidos.
+using Sfx = Snd;
+static void sfx(Sfx s) { soundPlay(s); }
 
 /* ================= STATE ================= */
 enum class St { Title, Play, Over };
@@ -815,8 +816,32 @@ static void drawTitle() {
 static const int BTN_SCALE = 4, BTN_SIZE = 24 * BTN_SCALE, BTN_Y = SCR_H - BTN_SIZE - 4;
 static const int BTN_JUMP_X = 12, BTN_DUCK_X = W - 12 - BTN_SIZE;
 static const int BTN_HIT_R = BTN_SIZE / 2 + 10;  // tolerância para dedo pequeno
-static const int HOME_X = 222, HOME_Y = 4, HOME_W = 36, HOME_H = 30;
-static bool jumpDown = false, homeDown = false;
+// Casinha e mudo lado a lado no topo, no lugar do botão de mudo do original
+static const int HOME_X = 200, HOME_Y = 4, HOME_W = 36, HOME_H = 30, MUTE_X = 244;
+static bool jumpDown = false, homeDown = false, muteDown = false;
+
+static void iconBox(int x, bool pressed) {
+  blendRect(x, HOME_Y, HOME_W, HOME_H, C(0x0a1030), 141);  // rgba(10,16,48,.55)
+  uint16_t border = pressed ? C(0xffe14a) : C(0xffffff);
+  fillRect(x, HOME_Y, HOME_W, 2, border);
+  fillRect(x, HOME_Y + HOME_H - 2, HOME_W, 2, border);
+  fillRect(x, HOME_Y, 2, HOME_H, border);
+  fillRect(x + HOME_W - 2, HOME_Y, 2, HOME_H, border);
+}
+// drawMuteIcon do original: alto-falante + ondas (ou X quando mudo), 12x10 desenhado 2x
+static void drawMuteIcon() {
+  static const char *spk[10] = {"............", "......#.....", ".....##.....", "..####......", "..####......",
+                                "..####......", "..####......", ".....##.....", "......#.....", "............"};
+  static const char *wav[10] = {"............", "............", "........#...", ".......#.#..", "......#..#..",
+                                "......#..#..", ".......#.#..", "........#...", "............", "............"};
+  static const char *xx[10] = {"............", "............", ".......#...#", "........#.#.", ".........#..",
+                               ".........#..", "........#.#.", ".......#...#", "............", "............"};
+  iconBox(MUTE_X, muteDown);
+  const char **second = soundMuted() ? xx : wav;
+  for (int r = 0; r < 10; r++)
+    for (int c = 0; c < 12; c++)
+      if (spk[r][c] == '#' || second[r][c] == '#') fillRect(MUTE_X + 6 + c * 2, HOME_Y + 5 + r * 2, 2, 2, C(0xffffff));
+}
 
 static void drawControls() {
   drawImg(btnJump, BTN_JUMP_X, BTN_Y);
@@ -827,16 +852,13 @@ static void drawControls() {
   drawText("ABAIXAR", BTN_DUCK_X - 8 - textW("ABAIXAR", 2), BTN_Y + 40, 2, C(0xffffff), true, C(0x1a2250));
 
   // Casinha: mesma moldura do botão de mudo do original
-  blendRect(HOME_X, HOME_Y, HOME_W, HOME_H, C(0x0a1030), 141);
-  fillRect(HOME_X, HOME_Y, HOME_W, 2, C(0xffffff));
-  fillRect(HOME_X, HOME_Y + HOME_H - 2, HOME_W, 2, C(0xffffff));
-  fillRect(HOME_X, HOME_Y, 2, HOME_H, C(0xffffff));
-  fillRect(HOME_X + HOME_W - 2, HOME_Y, 2, HOME_H, C(0xffffff));
+  iconBox(HOME_X, homeDown);
   static const char *house[10] = {"............", ".....##.....", "....####....", "...######...", "..########..",
                                   "...######...", "...##..##...", "...##..##...", "...######...", "............"};
   for (int r = 0; r < 10; r++)
     for (int c = 0; c < 12; c++)
       if (house[r][c] == '#') fillRect(HOME_X + 6 + c * 2, HOME_Y + 5 + r * 2, 2, 2, homeDown ? C(0xffe14a) : C(0xffffff));
+  drawMuteIcon();
 }
 
 static bool inCircle(int x, int y, int cx, int cy, int r) { return (x - cx) * (x - cx) + (y - cy) * (y - cy) <= r * r; }
@@ -845,16 +867,19 @@ static bool inCircle(int x, int y, int cx, int cy, int r) { return (x - cx) * (x
 static bool readControls() {
   int16_t xs[2], ys[2];
   uint8_t n = displayReadTouch(xs, ys, 2);
-  bool jump = false, duck = false, home = false;
+  bool jump = false, duck = false, home = false, mute = false;
   for (uint8_t i = 0; i < n; i++) {
     jump |= inCircle(xs[i], ys[i], BTN_JUMP_X + BTN_SIZE / 2, BTN_Y + BTN_SIZE / 2, BTN_HIT_R);
     duck |= inCircle(xs[i], ys[i], BTN_DUCK_X + BTN_SIZE / 2, BTN_Y + BTN_SIZE / 2, BTN_HIT_R);
-    home |= xs[i] >= HOME_X - 12 && xs[i] < HOME_X + HOME_W + 12 && ys[i] < HOME_Y + HOME_H + 14;
+    home |= xs[i] >= HOME_X - 12 && xs[i] < HOME_X + HOME_W + 4 && ys[i] < HOME_Y + HOME_H + 14;
+    mute |= xs[i] >= MUTE_X - 4 && xs[i] < MUTE_X + HOME_W + 12 && ys[i] < HOME_Y + HOME_H + 14;
   }
+  if (mute && !muteDown) soundSetMuted(!soundMuted());  // toggleMute() do original
+  muteDown = mute;
   // Título e game over: tocar em qualquer lugar (menos na casinha) começa, como no original (o canvas inteiro
   // chama pressJump). Durante o jogo só os dois botões valem.
   static bool anyDown = false;
-  bool any = n > 0 && !home;
+  bool any = n > 0 && !home && !mute;
   if (state != St::Play) {
     if (any && !anyDown) pressJump();
   } else if (jump && !jumpDown) {
@@ -965,7 +990,9 @@ void gameStart() {
   resetGame();
   state = St::Title;
   stateT = clockT = walkClock = 0;
-  jumpDown = duckHeld = homeDown = false;
+  jumpDown = duckHeld = homeDown = muteDown = false;
+  soundEnable(true);
+  sfx(Sfx::TitleMusic);  // o original toca a música do título quando o navegador permite autoplay
   lastT = fpsT = millis();
   fpsFrames = fpsRenderUs = fpsSendUs = 0;
   running = true;
@@ -1013,6 +1040,8 @@ bool gameFrame() {
 
 void gameStop() {
   running = false;
+  sfx(Sfx::StopMusic);
+  soundEnable(false);
   freeSpans(clouds);
   freeSpans(hills);
   Img *imgs[] = {&sky_sun, &gtile, &heartF, &heartE, &bee0, &bee1, &bush, &rock, &crate, &pipeSpr, &btnJump, &btnDuck};

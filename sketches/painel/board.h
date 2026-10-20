@@ -18,5 +18,11 @@
 #define TCA9554_ADDR      0x20
 #define TCA_PIN_LCD_RST   0
 #define TCA_PIN_TOUCH_RST 1
+#define TCA_PIN_AMP       2    // liga o amplificador do alto-falante
+
+// Áudio: codec ES8311 (I2C 0x18) + I2S (exemplos 01_i2s_audio / 04_es8311_example)
+#define PIN_I2S_BCLK 2
+#define PIN_I2S_LRCK 4
+#define PIN_I2S_DOUT 12
 
 #define PIN_PMU_IRQ 35
