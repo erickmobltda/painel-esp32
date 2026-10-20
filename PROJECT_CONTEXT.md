@@ -5,7 +5,29 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 ## Estado atual
 - **Etapa 1 concluída (2026-10-20)**: `09_lvgl_arduino_v8` oficial, sem modificação, compilado e gravado;
   usuário confirmou na placa texto + switches + toque.
-- Próxima: **Etapa 2** — estrutura do projeto + tela inicial com 2 botões + bateria/carregando.
+- **Etapa 2 concluída (2026-10-20)**: sketch `sketches/painel` com tela inicial em paisagem (Spotify | Jogo),
+  barra de status (Wi-Fi placeholder, bateria %/carregando/USB). Usuário confirmou na placa: orientação, botões, voltar, ⚡ some sem USB.
+- Próxima: **Etapa 3** — Wi-Fi: AP de configuração + conexão + página de config com PIN.
+
+## Estrutura do sketch `sketches/painel`
+| Arquivo | Papel |
+|---|---|
+| `painel.ino` | setup/loop: Wire → display → power → home; loop chama `lv_timer_handler()` |
+| `board.h` | pinos e rotação (`LCD_ROTATION 1` = paisagem 480x320) |
+| `display.*` | reset LCD/touch via TCA9554, Arduino_GFX ST7796, touch FT6X36 (com conversão de coordenadas p/ rotação), LVGL 8 |
+| `power.*` | AXP2101 **somente leitura** (liga medições ADC; não altera tensões nem carga) |
+| `ui.*` | telas; `loadScreen()` troca tela, apaga a anterior com `lv_obj_del_async` e loga heap/PSRAM |
+
+## Orientação e UI
+- **Paisagem** (placa deitada), escolha do usuário. Rotação de hardware GFX = 1; touch convertido em `display.cpp`
+  (`x = y_nativo`, `y = 319 - x_nativo`). Se um dia precisar girar 180°, usar `LCD_ROTATION 3` (mapeamento já existe).
+- Fonte grande: `LV_FONT_MONTSERRAT_28` habilitada em `arduino/libraries/lv_conf.h` (este arquivo é versionado;
+  o LVGL usa o `lv_conf.h` ao lado da pasta `lvgl`. O sketch `painel` NÃO tem lv_conf.h próprio, para não haver duas configs).
+
+## Memória (medida na home)
+- Heap interno livre ~162 KB (maior bloco ~59 KB), PSRAM livre ~2 MB. Os 2 buffers LVGL (480x80x2 = 77 KB cada) estão
+  na RAM interna — candidato a reduzir/mover se TLS apertar nas etapas 3/4.
+- Bateria: % do AXP2101 parece baixa para a tensão (14% @ 3,82 V); o chip calibra após um ciclo completo (comentário do exemplo oficial).
 
 ## Placa (confirmado com `esptool flash-id`)
 - Chip ESP32-D0WDR2-V3 rev v3.1, flash 16 MB (Winbond), MAC 20:e7:c8:d2:bc:fc
@@ -43,7 +65,7 @@ git -C vendor/ESP32-Touch-LCD-3.5 checkout 19f266e8c257f3ed5519e2e4cc062d9e5a64f
 mkdir -p arduino/libraries
 for l in ESP32-audioI2S-master GFX_Library_for_Arduino lvgl OneButton SensorLib TCA9554 XPowersLib; do
   cp -R vendor/ESP32-Touch-LCD-3.5/examples/Arduino/libraries/$l arduino/libraries/; done
-cp sketches/09_lvgl_arduino_v8/lv_conf.h arduino/libraries/
+# arduino/libraries/lv_conf.h já vem do git
 CLI="/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli"
 "$CLI" --config-file arduino-cli.yaml core update-index
 "$CLI" --config-file arduino-cli.yaml core install esp32:esp32@3.3.5
@@ -54,8 +76,8 @@ CLI="/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/
 CLI="/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli"
 FQBN="esp32:esp32:esp32:PSRAM=enabled,FlashSize=16M,PartitionScheme=huge_app"
 PORT=/dev/cu.usbmodem5C371857381
-"$CLI" --config-file arduino-cli.yaml compile --fqbn $FQBN --build-path build/09 sketches/09_lvgl_arduino_v8
-"$CLI" --config-file arduino-cli.yaml upload -p $PORT --fqbn $FQBN --input-dir build/09 sketches/09_lvgl_arduino_v8
+"$CLI" --config-file arduino-cli.yaml compile --fqbn $FQBN --build-path build/painel sketches/painel
+"$CLI" --config-file arduino-cli.yaml upload -p $PORT --fqbn $FQBN --input-dir build/painel sketches/painel
 "$CLI" --config-file arduino-cli.yaml monitor -p $PORT -c baudrate=115200
 ```
 Se o upload travar em "Connecting...": segurar o botão BOOT da placa.

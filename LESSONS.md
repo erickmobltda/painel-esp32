@@ -8,3 +8,11 @@
 ## [2026-10-20] — Confirmar o dispositivo antes de gravar
 - **What happened**: o usuário perguntou como garantir que a gravação não atinge o HD/outro dispositivo.
 - **Rule**: antes de gravar numa porta nova, rodar `esptool --port <p> flash-id` (somente leitura), mostrar chip/flash/MAC e esperar o ok.
+
+## [2026-10-20] — "Retrato/em pé" é ambíguo para o usuário
+- **What happened**: construí em retrato (320x480); o usuário segura a placa deitada e esperava o desenho na posição de leitura.
+- **Rule**: ao falar de orientação, descrever pela posição física ("placa mais larga que alta, conector de qual lado") e confirmar com foto antes de desenhar telas.
+
+## [2026-10-20] — Trocar de tela dentro do evento de clique
+- **What happened**: `lv_scr_load_anim(..., 0, 0, true)` no LVGL 8.4 apaga a tela antiga na hora, inclusive o botão cujo evento está rodando.
+- **Rule**: trocar com `lv_scr_load(new)` + `lv_obj_del_async(old)` (função `loadScreen` em `ui.cpp`).
