@@ -11,6 +11,7 @@
 #include "game.h"
 #include "sound.h"
 #include "idle.h"
+#include "paint.h"
 
 void setup() {
   Serial.begin(115200);
@@ -38,6 +39,13 @@ void loop() {
     delay(50);
     return;
   }
+  if (paintRunning()) {
+    if (!paintFrame()) {
+      paintStop();
+      uiShowHome();
+    }
+    return;
+  }
   if (gameRunning()) {
     if (!gameFrame()) {
       gameStop();
@@ -46,9 +54,10 @@ void loop() {
     return;
   }
   lv_timer_handler();
+  paintStartIfRequested();
   netLoop();
 
-  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela; 'q' busca a fila; 'g' abre o jogo; 'b' simula bateria
+  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela; 'q' busca a fila; 'g' abre o jogo; 'b' simula bateria; 'p' abre o Pintar
   if (Serial.available()) {
     char c = Serial.read();
     if (c == 's') {
@@ -60,6 +69,8 @@ void loop() {
       spotifyRequestQueue(true);
     } else if (c == 'g') {
       gameStart();
+    } else if (c == 'p') {
+      paintStart();
     } else if (c == 'b') {
       static bool battery = false;
       battery = !battery;

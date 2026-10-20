@@ -5,6 +5,7 @@
 #include "clock.h"
 #include "fonts.h"
 #include "game.h"
+#include "paint.h"
 #include "sound.h"
 
 #include <Arduino.h>
@@ -128,6 +129,11 @@ static void refreshHome(lv_timer_t *) {
 static void settingsEvent(lv_event_t *);
 static void spotifyEvent(lv_event_t *);
 
+static void paintEvent(lv_event_t *) {
+  logMemory("pintar");
+  paintRequestStart();  // abre no loop(), depois que o LVGL terminar este ciclo de desenho
+}
+
 static void gameEvent(lv_event_t *) {
   logMemory("jogo");
   gameStart();  // a partir do próximo loop() o jogo assume a tela
@@ -156,11 +162,15 @@ void uiShowHome() {
   lv_label_set_text(batteryLabel, "");
   lv_obj_align(batteryLabel, LV_ALIGN_TOP_RIGHT, -10, 12);
 
-  lv_obj_t *spotifyBtn = createButton(scr, LV_SYMBOL_AUDIO "  Spotify", lv_color_hex(0x1DB954), 210, 250, spotifyEvent);
-  lv_obj_align(spotifyBtn, LV_ALIGN_BOTTOM_LEFT, 20, -20);
+  // 3 apps lado a lado (decisão do usuário)
+  lv_obj_t *spotifyBtn = createButton(scr, LV_SYMBOL_AUDIO "\nSpotify", lv_color_hex(0x1DB954), 140, 250, spotifyEvent);
+  lv_obj_align(spotifyBtn, LV_ALIGN_BOTTOM_LEFT, 15, -20);
 
-  lv_obj_t *gameBtn = createButton(scr, LV_SYMBOL_PLAY "  Jogo", lv_color_hex(0xE67E22), 210, 250, gameEvent);
-  lv_obj_align(gameBtn, LV_ALIGN_BOTTOM_RIGHT, -20, -20);
+  lv_obj_t *gameBtn = createButton(scr, LV_SYMBOL_PLAY "\nJogo", lv_color_hex(0xE67E22), 140, 250, gameEvent);
+  lv_obj_align(gameBtn, LV_ALIGN_BOTTOM_MID, 0, -20);
+
+  lv_obj_t *paintBtn = createButton(scr, LV_SYMBOL_EDIT "\nPintar", lv_color_hex(0x8E24AA), 140, 250, paintEvent);
+  lv_obj_align(paintBtn, LV_ALIGN_BOTTOM_RIGHT, -15, -20);
 
   loadScreen(scr, "home", refreshHome);
 }

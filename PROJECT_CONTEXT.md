@@ -27,7 +27,8 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   reconecta sozinho ao religar; 3) nada tocando → mensagem clara; 4) teste real na bateria (sem USB).
   A conferir também: RAM ao sair do Spotify (log mostrou 69 KB livres logo na troca; verificar se volta ao normal após
   alguns segundos, quando a tarefa fecha as conexões TLS).
-- Próximas: terminar testes da 9 → **11** README final (a 10, capa, já foi feita na 5) → **12** desempenho.
+- **App "Pintar" (pedido extra do usuário, 2026-10-20) concluído**: confirmado na placa.
+- Próximas: melhorias que o usuário quer discutir; terminar testes da 9 → **11** README final (a 10, capa, já foi feita na 5) → **12** desempenho.
   Itens do checklist ainda sem confirmação do usuário: bateria escurece/apaga/acorda; sem Wi-Fi; script `tools/spotify_auth.py`
   (renovação do token sem regravar) — o usuário usou só o fluxo pela página da placa.
 - **Etapa 12 (nova, última, pedido do usuário)**: investigar e melhorar desempenho do Spotify (ver "Pendências de desempenho").
@@ -89,6 +90,17 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   Para usar o SD (ex.: cache de capas da etapa 12) será preciso planejar o compartilhamento do barramento.
 - Usuário: as animações da tela de título do jogo podem ser reduzidas se precisar de desempenho.
 
+## App Pintar — `paint.cpp` (decisões do usuário)
+- Tela inicial com 3 botões lado a lado (Spotify | Jogo | Pintar, 140x250).
+- Área de desenho 384x320 (canvas RGB565 na PSRAM) + barra de 96 px à direita: casinha (voltar ao soltar), lixeira
+  ("Apagar tudo?" Sim/Voltar), 8 cores, glitter (pontinhos de 6 cores brilhantes, parados), borracha (2x a espessura),
+  3 espessuras (raios 3/7/14). Traço contínuo: carimbos interpolados entre leituras do touch.
+- Desenha direto na tela (sem LVGL): só o retângulo alterado é enviado (bytes invertidos na RAM interna + DMA).
+- Salva em LittleFS (partição `spiffs` de 896 KB do huge_app), `/desenho.bin` em RLE (pares quantidade+cor):
+  ao sair e 15 s depois do último traço. Na 1ª vez a partição é formatada (o log mostra "mount failed" uma vez: normal).
+- Abre via `paintRequestStart()` → `paintStartIfRequested()` no loop, DEPOIS do `lv_timer_handler()` (ver LESSONS).
+- Depuração: `p` pelo serial abre o Pintar.
+
 ## Energia — `idle.cpp`
 - Brilho por PWM (`ledcAttach` no pino 25): aceso 255, escurecido 40, apagado 0. USB detectado pelo AXP2101 (a cada 1 s).
 - Atividade = qualquer toque (`displayLastTouch`, inclusive no jogo) ou partida em andamento (`gamePlaying()`).
@@ -146,7 +158,7 @@ Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a c
 - LVGL com **1 buffer de 480x40** (38 KB, RAM interna) — decisão do usuário; o flush é bloqueante, então 2 buffers não ajudavam.
 - Com Wi-Fi conectado, na home: ~155 KB livres (maior bloco ~110 KB). Na tela do Spotify com as 2 conexões TLS: ~53 KB (maior ~30 KB).
 - PSRAM livre ~2 MB (Strings > 4 KB vão para a PSRAM: `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`).
-- Programa: 2,18 MB de 3 MB (69%) — o atlas do jogo ocupa ~420 KB.
+- Programa: 2,23 MB de 3 MB (71%) — o atlas do jogo ocupa ~420 KB.
 - No jogo (Wi-Fi desligado, som ligado): heap interno ~115 KB livres (maior bloco ~63 KB), PSRAM ~1,83 MB.
 - Home: ~135 KB livres (o barramento DMA da tela custa ~6 KB).
 - Bateria: % do AXP2101 parece baixa para a tensão (14% @ 3,82 V); o chip calibra após um ciclo completo (comentário do exemplo oficial).

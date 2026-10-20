@@ -73,3 +73,11 @@
 ## [2026-10-20] — Recursos só quando a tela precisa
 - **What happened**: ligar I2S + mixer no boot consumiu ~12 KB de RAM interna, que faltaria na tela do Spotify (2 sessões TLS).
 - **Rule**: medir o heap antes/depois de cada subsistema novo; ligar periféricos (I2S, amplificador, TLS) só nas telas que usam.
+
+## [2026-10-20] — Assumir a tela de dentro de um evento do LVGL
+- **What happened**: o Pintar abria com o botão roxo da tela inicial por cima: o clique é tratado dentro do `lv_timer_handler()`, que no mesmo ciclo redesenha o botão "solto" depois que o app já tinha desenhado.
+- **Rule**: apps que desenham direto na tela devem começar só depois que o `lv_timer_handler()` retornar (pedido no evento, início no loop). O jogo escapa porque redesenha a tela inteira a cada quadro.
+
+## [2026-10-20] — Nomes que colidem com macros de bibliotecas
+- **What happened**: `static const uint16_t WHITE` quebrou a compilação: o Arduino_GFX define `#define WHITE`.
+- **Rule**: evitar nomes genéricos em inglês (WHITE, BLACK, RED...) em arquivos que incluem Arduino_GFX; e no macOS usar `perl -pi -e 's/\bX\b/Y/g'` (o `sed` BSD não entende `\b`).
