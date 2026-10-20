@@ -44,3 +44,15 @@
 ## [2026-10-20] — Testar sozinho antes de pedir teste ao usuário
 - **What happened**: pedi ao usuário 3 rodadas de teste para bugs que eu podia reproduzir.
 - **Rule**: usar o comando de depuração `s` pelo serial (e o script de captura com envio `T:c`) para validar a lógica antes; pedir ao usuário só o que exige o toque/olho humano.
+
+## [2026-10-20] — Leitura de corpo grande com NetworkClientSecure
+- **What happened**: a capa chegava pela metade: `read()`/`readBytes()` devolvem -1/parcial assim que não há dados no momento.
+- **Rule**: ler em laço com `available()` + `delay()` até completar o `Content-Length` ou estourar um prazo.
+
+## [2026-10-20] — Captura serial segura a porta
+- **What happened**: o upload falhou ("No serial data received") porque a captura em background ainda usava a porta; testei o firmware antigo achando que era o novo.
+- **Rule**: sempre `pkill -f scratchpad/serial.py` antes de gravar, e conferir "Wrote ... at 0x00010000" antes de testar.
+
+## [2026-10-20] — Ler o log inteiro antes de concluir
+- **What happened**: concluí que "tudo ficou lento" olhando um log que só registra consultas lentas.
+- **Rule**: lembrar quais filtros o próprio log aplica antes de tirar conclusões; medir as fases separadamente (cabeçalho, corpo, decodificação).

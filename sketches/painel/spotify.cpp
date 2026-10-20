@@ -6,13 +6,17 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <base64.h>
+#include "extra/libs/sjpg/tjpgd.h"  // decodificador JPEG que vem com o LVGL (LV_USE_SJPG 1)
 
 // Lista de autoridades certificadoras embutida no core (ESP-IDF, CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL)
 extern const uint8_t x509_crt_bundle_start[] asm("_binary_x509_crt_bundle_start");
 extern const uint8_t x509_crt_bundle_end[] asm("_binary_x509_crt_bundle_end");
 
 static const char *TOKEN_URL = "https://accounts.spotify.com/api/token";
+static const char *API_URL = "https://api.spotify.com/v1/me/player";
 static const char *PLAYER_URL = "https://api.spotify.com/v1/me/player?additional_types=track,episode&market=from_token";
+static const int ART_SIZE = 150;            // lado da capa na tela (px)
+static const int ART_MAX_BYTES = 300000;    // JPEG baixado (as capas de 300 px têm ~20-40 KB)
 static const uint32_t POLL_MS = 1000;
 static const uint32_t RETRY_MS = 5000;
 static const uint32_t HTTP_TIMEOUT_MS = 8000;
@@ -24,6 +28,20 @@ static volatile bool active = false;
 static SpPlayback playback;
 static Config cfg;
 static bool needsReauth = false;
+
+struct CmdMsg {
+  SpCmd cmd;
+  uint32_t positionMs;
+};
+static QueueHandle_t cmdQueue;
+
+// Capa: URL pedida pela última consulta (stateMutex) e a já carregada (só a tarefa usa)
+static String artUrlWanted, artUrlLoaded;
+static volatile bool artReload = false;  // tela do Spotify reaberta: buscar a capa de novo
+static uint32_t artRetryAt = 0;          // download falhou: nova tentativa a partir daqui (só a tarefa usa)
+static uint16_t *pendingArt = nullptr;     // capa aguardando a tela buscar (stateMutex); nullptr = sem capa
+static int pendingArtW = 0, pendingArtH = 0;
+static uint32_t artVersion = 0, artVersionTaken = 0;  // (stateMutex)
 
 static String accessToken;  // só usado pela tarefa
 static uint32_t accessTokenExpiresAt = 0;
@@ -123,6 +141,10 @@ static void parsePlayer(const String &body) {
   filter["item"]["duration_ms"] = true;
   filter["item"]["artists"][0]["name"] = true;
   filter["item"]["show"]["name"] = true;  // podcast
+  filter["item"]["album"]["images"][0]["url"] = true;
+  filter["item"]["album"]["images"][0]["width"] = true;
+  filter["item"]["images"][0]["url"] = true;  // episódio de podcast
+  filter["item"]["images"][0]["width"] = true;
 
   JsonDocument doc;
   DeserializationError err = deserializeJson(doc, body, DeserializationOption::Filter(filter));
@@ -143,6 +165,18 @@ static void parsePlayer(const String &body) {
   }
   if (artist.length() == 0) artist = item["show"]["name"] | "";
 
+  // Menor imagem com pelo menos ART_SIZE px (o Spotify manda 640, 300 e 64)
+  JsonArray images = item["album"]["images"].isNull() ? item["images"].as<JsonArray>() : item["album"]["images"].as<JsonArray>();
+  String artUrl;
+  int artWidth = INT_MAX;
+  for (JsonObject img : images) {
+    int w = img["width"] | 0;
+    if (w >= ART_SIZE && w < artWidth) {
+      artWidth = w;
+      artUrl = img["url"].as<String>();
+    }
+  }
+
   xSemaphoreTake(stateMutex, portMAX_DELAY);
   playback.state = SpState::Ok;
   playback.error = "";
@@ -153,7 +187,43 @@ static void parsePlayer(const String &body) {
   playback.progressMs = doc["progress_ms"];
   playback.durationMs = item["duration_ms"];
   playback.fetchedAt = millis();
+  artUrlWanted = artUrl;
   xSemaphoreGive(stateMutex);
+}
+
+// Requisição na conexão mantida aberta com api.spotify.com. Devolve o código HTTP (<0 = falha de conexão).
+static int apiRequest(NetworkClientSecure &client, HTTPClient &http, const char *method, const String &url, String &body,
+                      String &retryAfter) {
+  xSemaphoreTake(httpsMutex, portMAX_DELAY);
+  static const char *headerKeys[] = {"Retry-After"};
+  http.collectHeaders(headerKeys, 1);
+  // client.stop() do core zera o contexto TLS inteiro (memset), inclusive o vínculo com o CA bundle:
+  // precisa religar antes de cada conexão nova
+  if (!client.connected()) setCaBundle(client);
+  http.begin(client, url);
+  http.addHeader("Authorization", "Bearer " + accessToken);
+  // O HTTPClient não manda Content-Length com corpo vazio, e o Spotify exige (senão 411)
+  if (strcmp(method, "GET") != 0) http.addHeader("Content-Length", "0");
+  uint32_t started = millis();
+  int code = http.sendRequest(method, (uint8_t *)nullptr, 0);
+  int size = http.getSize();
+  body = code == 200 ? http.getString() : "";
+  uint32_t elapsed = millis() - started;
+  if ((code != 200 && code != 204) || elapsed > 1500) {
+    Serial.printf("[spotify] %s %s: HTTP %d, %d bytes (anunciado %d) em %u ms\n", method, url.c_str() + 30, code,
+                  body.length(), size, elapsed);
+  }
+  retryAfter = http.header("Retry-After");
+  if (code < 0) {
+    char tlsError[100] = "";
+    client.lastError(tlsError, sizeof(tlsError));
+    Serial.printf("[spotify] conexao falhou: %s | TLS: %s\n", http.errorToString(code).c_str(), tlsError);
+    // conexão caiu: fecha tudo para a próxima tentativa abrir do zero
+    http.end();
+    client.stop();
+  }
+  xSemaphoreGive(httpsMutex);
+  return code;
 }
 
 // Uma consulta ao player. Devolve quanto esperar até a próxima.
@@ -179,33 +249,8 @@ static uint32_t pollOnce(NetworkClientSecure &client, HTTPClient &http) {
     if (!refreshAccessToken()) return RETRY_MS;
   }
 
-  xSemaphoreTake(httpsMutex, portMAX_DELAY);
-  static const char *headerKeys[] = {"Retry-After"};
-  http.collectHeaders(headerKeys, 1);
-  // client.stop() do core zera o contexto TLS inteiro (memset), inclusive o vínculo com o CA bundle:
-  // precisa religar antes de cada conexão nova
-  if (!client.connected()) setCaBundle(client);
-  http.begin(client, PLAYER_URL);
-  http.addHeader("Authorization", "Bearer " + accessToken);
-  uint32_t started = millis();
-  int code = http.GET();
-  int size = http.getSize();
-  String body = code == 200 ? http.getString() : "";
-  uint32_t elapsed = millis() - started;
-  if ((code != 200 && code != 204) || elapsed > 1500) {
-    Serial.printf("[spotify] GET player: HTTP %d, %d bytes (tamanho anunciado %d) em %u ms\n", code, body.length(), size,
-                  elapsed);
-  }
-  String retryAfter = http.header("Retry-After");
-  if (code < 0) {
-    char tlsError[100] = "";
-    client.lastError(tlsError, sizeof(tlsError));
-    Serial.printf("[spotify] conexao falhou: %s | TLS: %s\n", http.errorToString(code).c_str(), tlsError);
-    // conexão caiu: fecha tudo para a próxima tentativa abrir do zero
-    http.end();
-    client.stop();
-  }
-  xSemaphoreGive(httpsMutex);
+  String body, retryAfter;
+  int code = apiRequest(client, http, "GET", PLAYER_URL, body, retryAfter);
 
   switch (code) {
     case 200:
@@ -213,6 +258,9 @@ static uint32_t pollOnce(NetworkClientSecure &client, HTTPClient &http) {
       return POLL_MS;
     case 204:
       setState(SpState::NoDevice);
+      xSemaphoreTake(stateMutex, portMAX_DELAY);
+      artUrlWanted = "";
+      xSemaphoreGive(stateMutex);
       return POLL_MS;
     case 401:
       accessToken = "";  // expirou antes do previsto: renova na próxima
@@ -229,45 +277,264 @@ static uint32_t pollOnce(NetworkClientSecure &client, HTTPClient &http) {
   }
 }
 
+static void setNotice(const String &text) {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  playback.notice = text;
+  playback.noticeAt = millis();
+  xSemaphoreGive(stateMutex);
+}
+
+static void runCommand(NetworkClientSecure &client, HTTPClient &http, const CmdMsg &msg) {
+  const char *method;
+  String url = API_URL;
+  switch (msg.cmd) {
+    case SpCmd::Play: method = "PUT"; url += "/play"; break;
+    case SpCmd::Pause: method = "PUT"; url += "/pause"; break;
+    case SpCmd::Next: method = "POST"; url += "/next"; break;
+    case SpCmd::Previous: method = "POST"; url += "/previous"; break;
+    case SpCmd::Seek: method = "PUT"; url += "/seek?position_ms=" + String(msg.positionMs); break;
+  }
+  String body, retryAfter;
+  int code = apiRequest(client, http, method, url, body, retryAfter);
+  if (code == 200 || code == 202 || code == 204) return;
+  if (code == 401) accessToken = "";
+  Serial.printf("[spotify] comando recusado: HTTP %d\n", code);
+  setNotice(code == 403   ? "O Spotify não permitiu esse comando"
+            : code == 404 ? "Nenhum dispositivo ativo"
+            : code == 429 ? "Muitos comandos, aguarde"
+                          : "Falha no comando (" + String(code) + ")");
+}
+
+// ---------- Capa do álbum ----------
+
+struct JpegCtx {
+  const uint8_t *data;
+  size_t len, pos;
+  uint16_t *out;
+  int outW, outH;
+};
+
+static size_t jpegInput(JDEC *jd, uint8_t *buf, size_t n) {
+  JpegCtx *ctx = (JpegCtx *)jd->device;
+  n = min(n, ctx->len - ctx->pos);
+  if (buf) memcpy(buf, ctx->data + ctx->pos, n);
+  ctx->pos += n;
+  return n;
+}
+
+// TJpgDec entrega blocos em RGB888 (JD_FORMAT 0); converte para RGB565
+static int jpegOutput(JDEC *jd, void *bitmap, JRECT *rect) {
+  JpegCtx *ctx = (JpegCtx *)jd->device;
+  const uint8_t *rgb = (const uint8_t *)bitmap;
+  for (int y = rect->top; y <= rect->bottom; y++) {
+    for (int x = rect->left; x <= rect->right; x++, rgb += 3) {
+      if (x < ctx->outW && y < ctx->outH) {
+        ctx->out[y * ctx->outW + x] = ((rgb[0] & 0xF8) << 8) | ((rgb[1] & 0xFC) << 3) | (rgb[2] >> 3);
+      }
+    }
+  }
+  return 1;
+}
+
+// Decodifica já reduzindo (1/2, 1/4, 1/8) para chegar perto de ART_SIZE. Devolve buffer na PSRAM ou nullptr.
+static uint16_t *decodeJpeg(const uint8_t *data, size_t len, int &w, int &h) {
+  void *work = malloc(4096);  // área de trabalho do TJpgDec (~3,1 KB com JD_FASTDECODE 0)
+  JpegCtx ctx = {data, len, 0, nullptr, 0, 0};
+  JDEC jd;
+  uint16_t *out = nullptr;
+  JRESULT res = work ? jd_prepare(&jd, jpegInput, work, 4096, &ctx) : JDR_MEM1;
+  if (res == JDR_OK) {
+    uint8_t scale = 0;
+    while (scale < 3 && (jd.width >> (scale + 1)) >= ART_SIZE) scale++;
+    ctx.outW = (jd.width + (1 << scale) - 1) >> scale;
+    ctx.outH = (jd.height + (1 << scale) - 1) >> scale;
+    ctx.out = (uint16_t *)heap_caps_malloc(ctx.outW * ctx.outH * 2, MALLOC_CAP_SPIRAM);
+    if (ctx.out) res = jd_decomp(&jd, jpegOutput, scale);
+    if (ctx.out && res == JDR_OK) {
+      out = ctx.out;
+      w = ctx.outW;
+      h = ctx.outH;
+    } else {
+      free(ctx.out);
+    }
+  }
+  if (res != JDR_OK) Serial.printf("[spotify] capa: falha ao decodificar JPEG (%d)\n", res);
+  free(work);
+  return out;
+}
+
+static void publishArt(uint16_t *pixels, int w, int h) {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  free(pendingArt);  // capa anterior que a tela não chegou a buscar
+  pendingArt = pixels;
+  pendingArtW = w;
+  pendingArtH = h;
+  artVersion++;
+  xSemaphoreGive(stateMutex);
+}
+
+// Baixa e decodifica a capa. Usa uma segunda conexão mantida aberta com o servidor de imagens
+// (i.scdn.co): só a primeira capa paga a abertura do TLS (~3-5 s); as seguintes levam ~1 s.
+static void fetchArt(NetworkClientSecure &client, HTTPClient &http, const String &url) {
+  artUrlLoaded = url;
+  if (url.length() == 0) {
+    publishArt(nullptr, 0, 0);
+    return;
+  }
+
+  uint32_t started = millis();
+  uint8_t *jpg = nullptr;
+  int len = 0;
+  xSemaphoreTake(httpsMutex, portMAX_DELAY);
+  {
+    if (!client.connected()) setCaBundle(client);  // ver apiRequest: stop() apaga o vínculo com o CA bundle
+    http.begin(client, url);
+    int code = http.GET();
+    len = http.getSize();
+    if (code == 200 && len > 0 && len <= ART_MAX_BYTES) {
+      jpg = (uint8_t *)heap_caps_malloc(len, MALLOC_CAP_SPIRAM);
+      NetworkClient *stream = http.getStreamPtr();
+      int got = 0;
+      uint32_t deadline = millis() + 10000;
+      // read() devolve -1 quando ainda não chegou nada (não espera): aguarda os dados até completar
+      while (jpg && got < len && (int32_t)(deadline - millis()) > 0) {
+        int avail = stream->available();
+        if (avail > 0) {
+          int n = stream->read(jpg + got, min(avail, len - got));
+          if (n > 0) got += n;
+        } else if (!stream->connected()) {
+          break;
+        } else {
+          delay(5);
+        }
+      }
+      if (got != len) {
+        Serial.printf("[spotify] capa: recebidos %d de %d bytes\n", got, len);
+        free(jpg);
+        jpg = nullptr;
+      }
+    } else {
+      Serial.printf("[spotify] capa: HTTP %d, %d bytes\n", code, len);
+    }
+    http.end();  // com setReuse(true) a conexão continua aberta para a próxima capa
+    if (!jpg) client.stop();
+  }
+  xSemaphoreGive(httpsMutex);
+  if (!jpg) {
+    publishArt(nullptr, 0, 0);  // a tela mostra o ícone no lugar
+    artUrlLoaded = "";          // tenta de novo daqui a pouco
+    artRetryAt = millis() + 10000;
+    return;
+  }
+
+  uint32_t downloaded = millis();
+  int w = 0, h = 0;
+  uint16_t *pixels = decodeJpeg(jpg, len, w, h);
+  free(jpg);
+  Serial.printf("[spotify] capa %dx%d (%d bytes): download %u ms, decodificacao %u ms | heap interno %u, maior bloco %u\n",
+                w, h, len, downloaded - started, millis() - downloaded, heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+  publishArt(pixels, w, h);
+}
+
 static void spotifyTask(void *) {
   NetworkClientSecure client;
   HTTPClient http;
   http.setReuse(true);  // mantém a conexão TLS aberta entre consultas
   http.setTimeout(HTTP_TIMEOUT_MS);
+  NetworkClientSecure artClient;  // segunda conexão, com o servidor das capas
+  HTTPClient artHttp;
+  artHttp.setReuse(true);
+  artHttp.setTimeout(HTTP_TIMEOUT_MS);
 
   for (;;) {
     if (!active) {
-      // Fora da tela do Spotify: fecha a conexão (libera a RAM do TLS) e dorme até ser acordada
+      // Fora da tela do Spotify: fecha as conexões (libera a RAM do TLS) e dorme até ser acordada
       http.end();
       client.stop();
+      artHttp.end();
+      artClient.stop();
       ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
       continue;
     }
+    // Comandos primeiro; depois deles, consulta na hora para a tela refletir o resultado
+    CmdMsg msg;
+    while (xQueueReceive(cmdQueue, &msg, 0) == pdTRUE) {
+      if (accessToken.length() == 0 || (int32_t)(accessTokenExpiresAt - millis()) < 60000) refreshAccessToken();
+      runCommand(client, http, msg);
+    }
     uint32_t wait = pollOnce(client, http);
+
+    xSemaphoreTake(stateMutex, portMAX_DELAY);
+    String artUrl = artUrlWanted;
+    xSemaphoreGive(stateMutex);
+    if (artReload || (artUrl != artUrlLoaded && (int32_t)(millis() - artRetryAt) >= 0)) {
+      artReload = false;
+      fetchArt(artClient, artHttp, artUrl);
+    }
+
     static UBaseType_t minFree = UINT32_MAX;
     UBaseType_t free = uxTaskGetStackHighWaterMark(nullptr);
     if (free < minFree) {
       minFree = free;
       Serial.printf("[spotify] pilha livre minima: %u bytes\n", free);
     }
-    if (wait) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(wait));
+    if (wait && uxQueueMessagesWaiting(cmdQueue) == 0) ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(wait));
   }
 }
 
 void spotifyBegin() {
   stateMutex = xSemaphoreCreateMutex();
   httpsMutex = xSemaphoreCreateMutex();
+  cmdQueue = xQueueCreate(4, sizeof(CmdMsg));
   configLoad(cfg);
-  // Núcleo 1, prioridade 0: o HTTPClient do core espera dados girando (delay(0)) sem ceder a CPU para
-  // prioridades menores. No núcleo 0 isso deixava a IDLE0 sem rodar e o watchdog reiniciava a placa.
-  // No núcleo 1 o watchdog não vigia a IDLE, e o loop() (tela, prioridade 1) sempre tem preferência.
-  xTaskCreatePinnedToCore(spotifyTask, "spotify", 8192, nullptr, tskIDLE_PRIORITY, &taskHandle, 1);
+  // Núcleo 1, prioridade 1 (igual ao loop()/tela, que se revezam a cada tick): o HTTPClient do core espera
+  // dados girando (delay(0)) sem ceder a CPU para prioridades menores. No núcleo 0 isso deixava a IDLE0 sem
+  // rodar e o watchdog reiniciava a placa; no núcleo 1 o watchdog não vigia a IDLE. Com prioridade 0 a
+  // tarefa só rodava com a tela ociosa e as consultas levavam 2-9 s.
+  xTaskCreatePinnedToCore(spotifyTask, "spotify", 12288, nullptr, 0, &taskHandle, 1);
 }
 
 void spotifySetActive(bool on) {
   active = on;
-  if (on) setState(SpState::Loading);
+  // Economia de energia do Wi-Fi (modem sleep) atrasa cada ida-e-volta até o próximo beacon do roteador:
+  // desligada só enquanto a tela do Spotify está aberta
+  WiFi.setSleep(!on);
+  if (on) {
+    setState(SpState::Loading);
+    artReload = true;  // a tela é nova: busca a capa de novo mesmo que a música seja a mesma
+  }
   xTaskNotifyGive(taskHandle);
+}
+
+void spotifyCommand(SpCmd cmd, uint32_t positionMs) {
+  // Atualiza o estado local na hora para a tela responder ao toque sem esperar a rede
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  uint32_t now = millis();
+  if (playback.isPlaying) playback.progressMs += now - playback.fetchedAt;
+  playback.fetchedAt = now;
+  if (cmd == SpCmd::Play) playback.isPlaying = true;
+  if (cmd == SpCmd::Pause) playback.isPlaying = false;
+  if (cmd == SpCmd::Seek) playback.progressMs = positionMs;
+  xSemaphoreGive(stateMutex);
+
+  CmdMsg msg = {cmd, positionMs};
+  if (xQueueSend(cmdQueue, &msg, 0) != pdTRUE) Serial.println("[spotify] fila de comandos cheia");
+  xTaskNotifyGive(taskHandle);
+}
+
+bool spotifyTakeArt(uint16_t *&pixels, int &w, int &h) {
+  xSemaphoreTake(stateMutex, portMAX_DELAY);
+  bool changed = artVersion != artVersionTaken;
+  if (changed) {
+    artVersionTaken = artVersion;
+    pixels = pendingArt;
+    w = pendingArtW;
+    h = pendingArtH;
+    pendingArt = nullptr;
+  }
+  xSemaphoreGive(stateMutex);
+  return changed;
 }
 
 SpPlayback spotifyPlayback() {

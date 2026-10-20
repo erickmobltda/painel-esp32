@@ -12,8 +12,10 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 - **Etapa 4 concluída (2026-10-20)**: app Spotify criado pelo usuário (Redirect URI `http://127.0.0.1:8888/callback`,
   usuário em User Management); autorização pela página da placa (fluxo principal) ou `tools/spotify_auth.py`;
   tela do Spotify mostra música/artista/aparelho/progresso. Usuário confirmou: tocar, pausar, trocar música, voltar, ⚙ com validade.
-- Próxima: **Etapa 5** — controles (anterior / play-pause / próxima) + slider de seek.
-- Pedido do usuário: **capa do álbum** (já prevista como etapa 10, opcional).
+- **Etapa 5 concluída (2026-10-20)**: controles ⏮ ⏯ ⏭, slider de seek arrastável e **capa do álbum** (a etapa 10
+  foi antecipada para cá por decisão do usuário). Usuário confirmou na placa.
+- Próxima: **Etapa 6** — fila.
+- **Etapa 12 (nova, última, pedido do usuário)**: investigar e melhorar desempenho do Spotify (ver "Pendências de desempenho").
 
 ## Estrutura do sketch `sketches/painel`
 | Arquivo | Papel |
@@ -43,6 +45,23 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 - Consulta: `?additional_types=track,episode&market=from_token` (~3 KB), ArduinoJson com filtro. 204/`item` nulo →
   "Nenhum dispositivo tocando"; 401 → renova token; 429 → espera `Retry-After`; `invalid_grant` → "Reautorize" (para de tentar).
 - Depuração: enviar `s` pelo serial liga/desliga a consulta sem abrir a tela (usado para testar sem tocar na placa).
+- Comandos (`spotifyCommand`): fila FreeRTOS → a tarefa executa (PUT play/pause/seek, POST next/previous) e consulta
+  logo depois; a tela atualiza o estado local na hora (ícone, posição). Cabeçalho `Content-Length: 0` adicionado à mão
+  (o HTTPClient não manda com corpo vazio). 403/404/429 viram aviso laranja por 3 s.
+- Capa: menor imagem ≥150 px (normalmente a de 300) baixada de `i.scdn.co` numa **segunda conexão TLS mantida aberta**,
+  decodificada com o TJpgDec do LVGL (`LV_USE_SJPG 1`, escala 1/2 → 150x150, RGB888→RGB565) para a PSRAM; a tela recebe
+  o buffer por `spotifyTakeArt` (contador de versão) e libera ao trocar/fechar. Falha no download → nova tentativa em 10 s.
+- Tarefa `spotify`: pilha 12 KB (mínimo livre ~6,7 KB), núcleo 1, prioridade 0.
+
+## Pendências de desempenho (Etapa 12)
+Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a capa baixa em 0,07 s):
+- Abrir TLS com `i.scdn.co` leva 3–10 s (primeira capa ao abrir a tela); capas seguintes ~0,8 s de download + 0,2–1,1 s de decodificação.
+- Primeira consulta após (re)conectar à API: 1,5–3 s; consultas com conexão aberta: ~0,3 s.
+- Enquanto a capa baixa/decodifica, a tarefa não consulta nem executa comandos (botões esperam).
+- Com as duas conexões TLS abertas: heap interno livre **~53 KB, maior bloco ~30 KB** — pouca folga.
+- Já testado sem efeito: prioridade da tarefa 0 vs 1; desligar o modem sleep do Wi-Fi (mantido desligado só com a tela aberta).
+- Ideias: tarefa separada para a capa; decodificar com `JD_FASTDECODE`; investigar por que o handshake demora (CPU vs rede,
+  `CONFIG_MBEDTLS_*`, sessão TLS reaproveitada); reduzir buffers TLS; HTTP/1.0 vs keep-alive.
 
 ## Wi-Fi e página de configuração (decisões do usuário)
 - Sem Wi-Fi salvo → ponto de acesso `Painel-XXXX` (XXXX = 2 últimos bytes do MAC, aqui `Painel-BCFC`), senha de 8 dígitos
@@ -63,9 +82,9 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 
 ## Memória (medida na home)
 - LVGL com **1 buffer de 480x40** (38 KB, RAM interna) — decisão do usuário; o flush é bloqueante, então 2 buffers não ajudavam.
-- Com Wi-Fi conectado, na home: ~158 KB livres (maior bloco ~110 KB). Na tela do Spotify com TLS aberto: ~100 KB (maior ~63 KB).
+- Com Wi-Fi conectado, na home: ~155 KB livres (maior bloco ~110 KB). Na tela do Spotify com as 2 conexões TLS: ~53 KB (maior ~30 KB).
 - PSRAM livre ~2 MB (Strings > 4 KB vão para a PSRAM: `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096`).
-- Programa: 1,65 MB de 3 MB (52%).
+- Programa: 1,67 MB de 3 MB (53%).
 - Bateria: % do AXP2101 parece baixa para a tensão (14% @ 3,82 V); o chip calibra após um ciclo completo (comentário do exemplo oficial).
 
 ## Placa (confirmado com `esptool flash-id`)

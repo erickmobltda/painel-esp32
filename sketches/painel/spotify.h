@@ -23,9 +23,13 @@ struct SpPlayback {
   uint32_t durationMs = 0;
   uint32_t fetchedAt = 0;  // millis() da resposta, para avançar a barra localmente
   String error;
+  String notice;           // aviso curto de comando recusado (ex.: 403); some sozinho
+  uint32_t noticeAt = 0;
 };
 
-// Cria a tarefa (núcleo 0) que conversa com a API. Requer configLoad/NVS já disponível.
+enum class SpCmd { Play, Pause, Next, Previous, Seek };
+
+// Cria a tarefa (núcleo 1) que conversa com a API. Requer configLoad/NVS já disponível.
 void spotifyBegin();
 // Consulta o player a cada ~1 s só enquanto a tela do Spotify estiver aberta.
 void spotifySetActive(bool active);
@@ -33,6 +37,13 @@ SpPlayback spotifyPlayback();
 // Relê credenciais da NVS (depois de salvar pela página/script) e sai de NeedsReauth.
 void spotifyReloadConfig();
 bool spotifyNeedsReauth();
+
+// Envia um comando ao player (assíncrono). Atualiza o estado local na hora e consulta logo depois.
+void spotifyCommand(SpCmd cmd, uint32_t positionMs = 0);
+
+// Capa do álbum (RGB565, ~150x150, na PSRAM). Devolve true se a capa mudou desde a última chamada;
+// pixels == nullptr significa "sem capa". A posse do buffer passa para quem chamou (liberar com free()).
+bool spotifyTakeArt(uint16_t *&pixels, int &w, int &h);
 
 // Troca o "code" do login (fluxo pela página da placa) por um refresh token. Bloqueia ~1-2 s.
 bool spotifyExchangeCode(const String &clientId, const String &clientSecret, const String &code,
