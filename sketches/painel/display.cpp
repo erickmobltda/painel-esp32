@@ -120,6 +120,13 @@ bool displayInit() {
     Serial.println("[display] touch FT6X36 nao encontrado");
     return false;
   }
+  // Toque mais leve: limiar 3/4 do padrão de fábrica (mínimo 16, para não haver toques fantasmas).
+  // O chip só entra no modo econômico (varredura lenta, o 1º toque pode falhar) após 255 s sem toque.
+  uint8_t factory = touch.getThreshold();
+  uint8_t threshold = max<int>(16, factory * 3 / 4);
+  touch.setThreshold(threshold);
+  touch.setMonitorTime(255);
+  Serial.printf("[display] touch: limiar %u (fabrica %u), modo economico apos 255 s\n", touch.getThreshold(), factory);
 
   lv_init();
 

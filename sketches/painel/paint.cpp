@@ -40,6 +40,9 @@ static bool waitRelease = false;  // depois de tocar na barra/diálogo, o mesmo 
 static bool exitPending = false;  // "voltar" sai ao soltar o dedo (o toque não cai na tela inicial)
 static int lastX, lastY;
 static bool unsaved = false;
+static uint32_t lastTouchAt = 0;
+// O touch às vezes "solta" por uma leitura no meio do traço: só considera que o dedo saiu após este tempo
+static const uint32_t LIFT_MS = 60;
 static uint32_t lastChange = 0;
 
 /* ================= tela ================= */
@@ -295,6 +298,10 @@ bool paintFrame() {
   bool touched = displayReadTouch(&x, &y, 1) > 0;
 
   if (!touched) {
+    if (drawing && millis() - lastTouchAt < LIFT_MS) {
+      delay(2);  // talvez seja só uma leitura falhada: espera a próxima sem quebrar o traço
+      return true;
+    }
     drawing = false;
     waitRelease = false;
     if (exitPending) return false;
@@ -302,6 +309,7 @@ bool paintFrame() {
     delay(10);
     return true;
   }
+  lastTouchAt = millis();
   if (waitRelease) return true;
 
   if (confirming) {

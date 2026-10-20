@@ -29,6 +29,10 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   alguns segundos, quando a tarefa fecha as conexões TLS).
 - **App "Pintar" (pedido extra do usuário, 2026-10-20) concluído**: confirmado na placa.
 - **Release v1.0 publicado (2026-10-20).**
+- **v1.2 (2026-10-20)**: fundo rosa claro (#FADDE8) na tela inicial e no Músicas (textos escuros); Músicas com círculo
+  de carregamento ao tocar numa capa, ícone ⏯ e moldura amarela (6 px) que mudam na hora (estado otimista); toque mais
+  sensível (limiar FT6336 = 3/4 do de fábrica: 60 → 45; modo econômico do touch só após 255 s); Pintar não quebra o traço
+  em falhas de leitura < 60 ms. Usuário confirmou tudo.
 - **v1.1 (2026-10-20): app "Músicas"** (confirmado pelo usuário). A tela "Spotify" (controle remoto) ficou escondida.
 - (histórico) Ideia em discussão: app de músicas para a filha (capas favoritas → tocar na Alexa). Descoberto: a Alexa toca na
   **conta Spotify da filha** (cada conta só enxerga seus aparelhos) → provavelmente autorizar a conta dela (User Management).
@@ -187,6 +191,7 @@ Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a c
 
 ## Repositório e versões
 - GitHub (público, decisão do usuário após varredura sem segredos): https://github.com/erickmobltda/painel-esp32 — branch `main`.
+- **Release v1.2** (2026-10-20, tag `v1.2`): melhorias de toque/visual (mesmo esquema de anexos, `painel-v1.2-*`).
 - **Release v1.1** (2026-10-20, tag `v1.1`): app Músicas. Mesmo esquema de anexos/comando da v1.0 (arquivos `painel-v1.1-*`).
 - **Release v1.0** (2026-10-20, tag `v1.0`): ponto de retorno seguro antes das melhorias. Anexos: bootloader, partitions,
   boot_app0 e app (.bin) + SHA256SUMS. Voltar sem apagar configuração/desenho:

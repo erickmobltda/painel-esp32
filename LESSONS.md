@@ -97,3 +97,11 @@
 ## [2026-10-20] — Comandos de depuração destrutivos
 - **What happened**: usei `x` (apaga as capas) para testar; o usuário abriu o app logo depois e viu as capas sumirem.
 - **Rule**: avisar o usuário antes de rodar teste que apaga dados visíveis, e restaurar o estado ao terminar.
+
+## [2026-10-20] — Sensibilidade do touch FT6336
+- **What happened**: toques leves às vezes não registravam; traços do Pintar saíam com falhas.
+- **Rule**: limiar (reg 0x80) de fábrica = 60 nesta placa; 45 ficou bom sem toques fantasmas. Tolerar leituras "sem toque" < 60 ms no meio de um traço.
+
+## [2026-10-20] — Estado otimista na interface
+- **What happened**: no Músicas, o ícone ⏯ e a moldura só mudavam depois da resposta do Spotify (segundos) e pareciam não funcionar.
+- **Rule**: ao tocar, atualizar a tela na hora (estado otimista + indicador de carregamento) e deixar a próxima consulta corrigir.

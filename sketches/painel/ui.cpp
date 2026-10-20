@@ -64,6 +64,13 @@ static lv_obj_t *createScreen() {
   return scr;
 }
 
+// Fundo rosa claro (decisão do usuário) nas telas da criança: tela inicial e Músicas
+static const uint32_t KID_BG = 0xFADDE8, KID_TEXT = 0x3A2340;
+static void setKidBackground(lv_obj_t *scr) {
+  lv_obj_set_style_bg_color(scr, lv_color_hex(KID_BG), 0);
+  lv_obj_set_style_text_color(scr, lv_color_hex(KID_TEXT), 0);
+}
+
 static lv_obj_t *createButton(lv_obj_t *parent, const char *text, lv_color_t color, lv_coord_t w, lv_coord_t h,
                               lv_event_cb_t cb) {
   lv_obj_t *btn = lv_btn_create(parent);
@@ -115,15 +122,15 @@ static void refreshHome(lv_timer_t *) {
   NetStatus n = netStatus();
   switch (n.mode) {
     case NetMode::Setup:
-      lv_obj_set_style_text_color(wifiLabel, lv_color_hex(0xE67E22), 0);
+      lv_obj_set_style_text_color(wifiLabel, lv_color_hex(0xC2410C), 0);
       lv_label_set_text(wifiLabel, LV_SYMBOL_WIFI " configurar");
       break;
     case NetMode::Connected:
-      lv_obj_set_style_text_color(wifiLabel, lv_color_white(), 0);
+      lv_obj_set_style_text_color(wifiLabel, lv_color_hex(KID_TEXT), 0);
       lv_label_set_text_fmt(wifiLabel, LV_SYMBOL_WIFI " %s", n.ssid.c_str());
       break;
     case NetMode::Offline:
-      lv_obj_set_style_text_color(wifiLabel, lv_color_hex(0x808080), 0);
+      lv_obj_set_style_text_color(wifiLabel, lv_color_hex(0x8A6F7A), 0);
       lv_label_set_text(wifiLabel, LV_SYMBOL_WIFI " sem conexão");
       break;
   }
@@ -145,6 +152,7 @@ static void gameEvent(lv_event_t *) {
 
 void uiShowHome() {
   lv_obj_t *scr = createScreen();
+  setKidBackground(scr);
 
   // Barra de status: Wi-Fi | ⚙ | bateria
   wifiLabel = lv_label_create(scr);
@@ -619,6 +627,19 @@ static String muUri[MU_PER_PAGE];
 static int muPage = 0, muPages = 1;
 static uint32_t muShownVersion, muShownThumbs;
 static SpPlaylist muList;  // cópia local, renovada só quando a versão muda
+// Toque numa capa: círculo girando até o Spotify confirmar a música (ou erro, ou 10 s)
+static const uint32_t MU_PENDING_TIMEOUT_MS = 10000;
+static lv_obj_t *muSpinner = nullptr;
+static String muPendingUri;
+static uint32_t muPendingAt = 0;
+static SpState muLastState = SpState::Loading;
+static bool muLastPlaying = false;
+
+static void muClearPending() {
+  if (muSpinner) lv_obj_del(muSpinner);
+  muSpinner = nullptr;
+  muPendingUri = "";
+}
 
 static void muFreeImages() {
   for (int i = 0; i < MU_PER_PAGE; i++) {
@@ -644,6 +665,7 @@ static uint16_t *muLoadThumb(const String &albumId) {
 }
 
 static void muShowPage() {
+  muClearPending();  // a capa com o círculo pode ter saído da página
   muFreeImages();
   int n = muList.items.size();
   muPages = max(1, (n + MU_PER_PAGE - 1) / MU_PER_PAGE);
@@ -700,10 +722,25 @@ static void refreshMusic(lv_timer_t *) {
     lv_obj_clear_flag(muGrid, LV_OBJ_FLAG_HIDDEN);
   }
 
-  // Moldura verde na capa que está tocando
-  bool playing = p.state == SpState::Ok && p.isPlaying;
+  // Diagnóstico: mudanças de estado do player nesta tela
+  if (p.state != muLastState || p.isPlaying != muLastPlaying) {
+    Serial.printf("[musicas] player: estado %d, tocando %d, musica %s\n", (int)p.state, p.isPlaying, p.trackUri.c_str());
+    muLastState = p.state;
+    muLastPlaying = p.isPlaying;
+  }
+
+  // Fim da espera do toque: o Spotify confirmou a música, deu erro, ou passou do tempo
+  if (muPendingUri.length()) {
+    bool confirmed = p.state == SpState::Ok && p.trackUri == muPendingUri && (int32_t)(p.fetchedAt - muPendingAt) > 0;
+    bool failed = p.notice.length() && (int32_t)(p.noticeAt - muPendingAt) >= 0;
+    if (confirmed || failed || millis() - muPendingAt > MU_PENDING_TIMEOUT_MS) muClearPending();
+  }
+
+  // Moldura verde na capa que está tocando. O ícone segue o estado otimista (muda na hora do toque);
+  // em "Carregando" o estado vem só do toque, sem resposta do Spotify ainda.
+  bool playing = p.isPlaying && (p.state == SpState::Ok || p.state == SpState::Loading);
   for (int i = 0; i < MU_PER_PAGE; i++)
-    lv_obj_set_style_border_width(muCells[i], muUri[i].length() && muUri[i] == p.trackUri && p.state == SpState::Ok ? 5 : 0, 0);
+    lv_obj_set_style_border_width(muCells[i], muUri[i].length() && muUri[i] == p.trackUri && p.state == SpState::Ok ? 6 : 0, 0);
   lv_label_set_text(muPlayLabel, playing ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
 
   bool showNotice = p.notice.length() && millis() - p.noticeAt < 4000;
@@ -717,7 +754,19 @@ static void refreshMusic(lv_timer_t *) {
 
 static void muCellEvent(lv_event_t *e) {
   int i = (int)(intptr_t)lv_event_get_user_data(e);
-  if (muUri[i].length()) spotifyPlayInPlaylist(muUri[i]);
+  if (muUri[i].isEmpty()) return;
+  muClearPending();
+  muSpinner = lv_spinner_create(muCells[i], 1000, 60);
+  lv_obj_set_size(muSpinner, 64, 64);
+  lv_obj_center(muSpinner);
+  lv_obj_set_style_arc_color(muSpinner, lv_color_hex(0x1DB954), LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(muSpinner, 8, LV_PART_INDICATOR);
+  lv_obj_set_style_arc_width(muSpinner, 8, LV_PART_MAIN);
+  lv_obj_clear_flag(muSpinner, LV_OBJ_FLAG_CLICKABLE);
+  muPendingUri = muUri[i];
+  muPendingAt = millis();
+  spotifyPlayInPlaylist(muUri[i]);
+  refreshMusic(nullptr);  // ícone e moldura mudam na hora
 }
 static void muPageEvent(lv_event_t *e) {
   int delta = (int)(intptr_t)lv_event_get_user_data(e);
@@ -730,8 +779,13 @@ static void muPlayEvent(lv_event_t *) {
   SpPlayback p = spotifyPlayback();
   if (p.state == SpState::Ok) spotifyCommand(p.isPlaying ? SpCmd::Pause : SpCmd::Play);
   else if (muUri[0].length()) spotifyPlayInPlaylist(muUri[0]);  // nada tocando: começa pela 1ª capa da página
+  refreshMusic(nullptr);  // ícone muda na hora
 }
-static void muScreenDeleted(lv_event_t *) { muFreeImages(); }
+static void muScreenDeleted(lv_event_t *) {
+  muSpinner = nullptr;  // apagado junto com a tela
+  muPendingUri = "";
+  muFreeImages();
+}
 static void musicLeave() {
   spotifySetActive(false);
   spotifySetArtWanted(true);
@@ -741,6 +795,7 @@ void uiShowMusic() { musicEvent(nullptr); }
 
 static void musicEvent(lv_event_t *) {
   lv_obj_t *scr = createScreen();
+  setKidBackground(scr);
   lv_obj_add_event_cb(scr, muScreenDeleted, LV_EVENT_DELETE, nullptr);
 
   muGrid = lv_obj_create(scr);
@@ -756,12 +811,13 @@ static void musicEvent(lv_event_t *) {
     lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
     lv_obj_set_style_radius(cell, 8, 0);
     lv_obj_set_style_clip_corner(cell, true, 0);
-    lv_obj_set_style_border_color(cell, lv_color_hex(0x1DB954), 0);
+    lv_obj_set_style_border_color(cell, lv_color_hex(0xFFD23F), 0);  // moldura amarela: destaca em qualquer capa
     lv_obj_set_style_border_post(cell, true, 0);  // moldura por cima da capa
     lv_obj_add_flag(cell, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(cell, muCellEvent, LV_EVENT_CLICKED, (void *)(intptr_t)i);
     lv_obj_t *icon = lv_label_create(cell);
     lv_obj_set_style_text_font(icon, &font_pt_28, 0);
+    lv_obj_set_style_text_color(icon, lv_color_white(), 0);  // o fundo da tela é claro, a célula é escura
     lv_label_set_text(icon, LV_SYMBOL_AUDIO);
     lv_obj_center(icon);
     muImgs[i] = lv_img_create(cell);
@@ -802,6 +858,9 @@ static void musicEvent(lv_event_t *) {
   configLoad(cfg);
   muShownVersion = muShownThumbs = UINT32_MAX;
   muList = SpPlaylist();
+  muSpinner = nullptr;
+  muPendingUri = "";
+  muLastState = SpState::Loading;
   spotifyRequestPlaylist(cfg.kidPlaylist);
   spotifySetArtWanted(false);
   spotifySetActive(true);

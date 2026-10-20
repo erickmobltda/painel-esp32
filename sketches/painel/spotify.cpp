@@ -906,6 +906,8 @@ void spotifyPlayInPlaylist(const String &trackUri) {
   playTrackUri = trackUri;
   playback.trackUri = trackUri;  // a moldura já vai para a capa tocada
   playback.isPlaying = true;
+  // Otimista: a tela já mostra "tocando"; se o Spotify recusar, a próxima consulta corrige (ex.: 204 → sem aparelho)
+  if (playback.state == SpState::NoDevice || playback.state == SpState::Loading) playback.state = SpState::Ok;
   xSemaphoreGive(stateMutex);
   playRequested = true;
   xTaskNotifyGive(taskHandle);
