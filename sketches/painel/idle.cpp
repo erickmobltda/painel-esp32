@@ -97,6 +97,13 @@ void idleSimulateBattery(bool on) {
 }
 
 bool idleLoop() {
+  if (screen == Screen::Off) {
+    // O LVGL e o jogo param de ler o touch: lê aqui para acordar (o toque é engolido pelo display).
+    // Antes de pegar `now`: um toque registrado depois dele deixava `now - lastActivity` negativo (= enorme em
+    // uint32) e a placa desligava em vez de acender
+    int16_t x, y;
+    displayReadTouch(&x, &y, 1);
+  }
   uint32_t now = millis();
   if (now - lastUsbCheck >= USB_CHECK_MS) {
     lastUsbCheck = now;
@@ -106,11 +113,6 @@ bool idleLoop() {
       idleDiag("%s (vbus %d, bateria %d, %d%%, %umV)", usb ? "USB" : "BATERIA", p.vbusIn, p.batteryConnected,
                p.batteryPercent, p.batteryMv);
     onUsb = usb;
-  }
-  if (screen == Screen::Off) {
-    // O LVGL e o jogo param de ler o touch: lê aqui para acordar (o toque é engolido pelo display)
-    int16_t x, y;
-    displayReadTouch(&x, &y, 1);
   }
   uint32_t touch = displayLastTouch();
   if (pwrClicked()) {

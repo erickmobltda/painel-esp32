@@ -112,4 +112,14 @@
 
 ## [2026-10-21] — Ler o coredump antes de adivinhar a causa de um travamento
 - **What happened**: a caixa-preta mostrou "motivo do reinício 4" (panic); o coredump na flash (ELF) apontou `abort()` em `lock_init_generic` na `tcpip_thread` = RAM interna esgotada.
-- **Rule**: `esptool read-flash 0x3F0000 0x10000 coredump.bin`; conferir o hash do ELF (`ESP_CORE_DUMP_INFO`) com o `painel.ino.elf` gravado; decodificar o PC e varrer a pilha da tarefa com `xtensa-esp32-elf-addr2line`.
+- **Rule**: `esptool read-flash 0xFF0000 0x10000 coredump.bin` (0x3F0000 até a v1.2); conferir o hash do ELF (`ESP_CORE_DUMP_INFO`) com o `painel.ino.elf` gravado; decodificar o PC e varrer a pilha da tarefa com `xtensa-esp32-elf-addr2line`.
+
+## [2026-10-21] — HTTPClient reaproveitado acumula cabeçalhos
+- **What happened**: depois de um PUT com corpo, todos os pedidos seguintes ao Spotify voltavam 400 ("Your client has issued a malformed request") e a placa acabou reiniciando por falta de RAM.
+- **Why**: no core 3.3.5, `HTTPClient::begin(client, url)` não limpa `_headers`; só `end()` limpa. Sem `end()` entre pedidos, `addHeader` acumulava Authorization, Content-Type e Content-Length antigos.
+- **Rule**: com `setReuse(true)`, chamar `http.end()` depois de cada pedido (a conexão continua aberta). Em erro HTTP persistente, imprimir o corpo e os cabeçalhos enviados antes de suspeitar do servidor.
+
+## [2026-10-21] — Subtração de tempos em uint32 com leitura fora de ordem
+- **What happened**: a placa desligava em vez de acender ao tocar na tela apagada.
+- **Why**: `now = millis()` era lido antes do toque; o toque registrava um `millis()` maior, `now - lastActivity` ficava negativo e virava ~4 bilhões em uint32 (passava do limite de 10 min).
+- **Rule**: ler todas as fontes de evento antes de capturar `now`, ou comparar com `(int32_t)(a - b)`.

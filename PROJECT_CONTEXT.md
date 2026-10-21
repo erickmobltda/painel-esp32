@@ -42,10 +42,14 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 - **Testes na placa (2026-10-21, usuário):** segurar PWR desliga e um toque rápido religa ✔; desligamento automático
   aos 10 min e religar pelo PWR ✔; toque que acorda não clica (escura e apagada) ✔; jogo não escurece ✔.
   Não feitos: Wi-Fi caindo (usuário não consegue desligar o roteador), noite na bateria (fará), `tools/spotify_auth.py` (depois).
-  **Bug aberto:** Músicas sem aparelho ativo (Spotify fechado, Alexa parada) → spinner na capa e depois a placa voltou à
-  tela inicial = provável reinício (só o botão ⌂ leva à inicial). Caminho: `playInPlaylist` 404 → GET /devices.
-  Investigar com caixa-preta (`i`, deve ter "boot, motivo") + coredump antes de mexer.
-- Próximas: bug acima → release v1.3 → **12** desempenho (precisa da placa).
+  **Bug corrigido (v1.3):** Músicas sem aparelho ativo reiniciava a placa. Causa: `apiRequest` não chamava `http.end()`
+  e o HTTPClient acumulava cabeçalhos; depois do PUT /play com corpo, todo pedido ia com `Content-Length: 140` → 400 do
+  Google Front End para sempre, reconexões TLS seguidas, RAM interna esgotada (coredump: abort em `lock_init_generic`
+  no log de erro do mDNS). Também corrigido: desligava aos 27 s (toque lido com tela apagada depois de `now` →
+  `now - lastActivity` negativo em uint32).
+  **Escolha do aparelho (decisão do usuário, 2026-10-21):** sem aparelho ativo, prefere celular/computador (só aparece
+  com o app aberto), senão a Alexa (Speaker, aparece mesmo parada). Com aparelho ativo, o PUT /play vai para ele.
+- **v1.3 publicada (2026-10-21).** Próxima: **12** desempenho (precisa da placa).
 - **Etapa 12 (nova, última, pedido do usuário)**: investigar e melhorar desempenho do Spotify (ver "Pendências de desempenho").
 
 ## Estrutura do sketch `sketches/painel`
@@ -118,9 +122,9 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   (~28 KB cada com os blocos da LittleFS). Lista em cache `/musicas.txt` (abre na hora; atualiza pela internet).
 - **Uma conexão TLS por vez no modo Músicas** (duas não cabem na RAM): enquanto faltam capas, a API fica fechada e o
   player não é consultado; pedido de tocar/comando tem prioridade.
-- ⚠️ Flash quase cheia: 28 capas = ~812 de 896 KB. `saveThumb` para quando sobra < 64 KB (reserva para o desenho do
-  Pintar); capas além disso ficam com o ♪. Solução proposta (etapa 12): tabela de partições custom com ~12 MB de LittleFS
-  (a flash tem 16 MB, o huge_app usa só 4 MB) — muda a tabela e apaga NVS/LittleFS uma vez.
+- Espaço: desde a v1.3 `sketches/painel/partitions.csv` (huge_app com LittleFS de 896 KB → 12,9 MB, coredump em
+  0xFF0000). NVS no mesmo lugar e a LittleFS **cresceu sem formatar** (esp_littlefs aceitou: 828/13184 KB, capas e
+  desenho mantidos). `saveThumb` ainda para quando sobra < 64 KB.
 
 ## App Pintar — `paint.cpp` (decisões do usuário)
 - Tela inicial com 3 botões lado a lado (Spotify | Jogo | Pintar, 140x250).
@@ -128,7 +132,7 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   ("Apagar tudo?" Sim/Voltar), 8 cores, glitter (pontinhos de 6 cores brilhantes, parados), borracha (2x a espessura),
   3 espessuras (raios 3/7/14). Traço contínuo: carimbos interpolados entre leituras do touch.
 - Desenha direto na tela (sem LVGL): só o retângulo alterado é enviado (bytes invertidos na RAM interna + DMA).
-- Salva em LittleFS (partição `spiffs` de 896 KB do huge_app), `/desenho.bin` em RLE (pares quantidade+cor):
+- Salva em LittleFS (partição `spiffs` de 12,9 MB, `partitions.csv`), `/desenho.bin` em RLE (pares quantidade+cor):
   ao sair e 15 s depois do último traço. Na 1ª vez a partição é formatada (o log mostra "mount failed" uma vez: normal).
 - Abre via `paintRequestStart()` → `paintStartIfRequested()` no loop, DEPOIS do `lv_timer_handler()` (ver LESSONS).
 - Depuração: `p` pelo serial abre o Pintar; `m` abre o Músicas.
@@ -145,8 +149,8 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   coordenada, USB, jogo, botão PWR) e mudanças USB/bateria. Serial: `i` mostra, `I` apaga.
 - Caixa-preta de 2026-10-20/21 (bateria real): escureceu e apagou certo; bateria ~10%/h com tela apagada (CPU 240 MHz +
   Wi-Fi + periféricos ligados) → zerou à noite. Houve 1 travamento ao acordar por toque: coredump (partição `coredump`
-  0x3F0000, ELF) → `abort()` em `lock_init_generic` (newlib locks.c:77) na `tcpip_thread` = sem RAM interna para criar
-  um lock. Leitura: `esptool read-flash 0x3F0000 0x10000 coredump.bin` + addr2line (ver LESSONS).
+  0x3F0000 até a v1.2, 0xFF0000 desde a v1.3, ELF) → `abort()` em `lock_init_generic` (newlib locks.c:77) na `tcpip_thread` = sem RAM interna para criar
+  um lock. Leitura: `esptool read-flash 0xFF0000 0x10000 coredump.bin` + addr2line (ver LESSONS).
 - **Desligamento automático (decisão do usuário)**: na bateria, parada 10 min → `pmu.shutdown()` (AXP2101). Testado
   com bateria simulada: desligou aos 600 s (até a porta USB sumiu). Religar = toque no PWR — **não confirmado ainda**.
   Toque na tela não acorda a placa desligada. A caixa-preta agora grava a RAM interna livre/maior bloco em cada evento.
@@ -242,7 +246,7 @@ Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a c
 ```
 esp32:esp32:esp32:PSRAM=enabled,FlashSize=16M,PartitionScheme=huge_app
 ```
-(ESP32 Dev Module, PSRAM ligado, 16 MB, Huge APP = 3 MB app sem OTA / 1 MB SPIFFS)
+(ESP32 Dev Module, PSRAM ligado, 16 MB, Huge APP = 3 MB app sem OTA; o `partitions.csv` do sketch substitui a tabela)
 
 ## Como retomar do zero (máquina nova)
 ```bash

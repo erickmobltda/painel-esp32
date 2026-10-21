@@ -1,0 +1,8 @@
+# Name,   Type, SubType, Offset,  Size, Flags
+# Igual ao huge_app do core 3.3.5 (app de 3 MB, NVS no mesmo lugar: Wi-Fi e Spotify continuam), mas usa os 16 MB:
+# LittleFS (rótulo "spiffs", o padrão do LittleFS.begin) de 896 KB -> 12,9 MB, para as capas do Músicas
+nvs,      data, nvs,     0x9000,  0x5000,
+otadata,  data, ota,     0xe000,  0x2000,
+app0,     app,  ota_0,   0x10000, 0x300000,
+spiffs,   data, spiffs,  0x310000,0xCE0000,
+coredump, data, coredump,0xFF0000,0x10000,

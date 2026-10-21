@@ -80,9 +80,11 @@ vermelho quando faltarem menos de 15 dias. Se aparecer **"Reautorize o Spotify"*
 Na página da placa, em **"Playlist do app Músicas"**: no Spotify, playlist → **Compartilhar → Copiar link**, cole
 e salve. Regras do Spotify para apps pessoais:
 - A playlist precisa ser **da mesma conta autorizada** na placa (de outras contas o Spotify só mostra nome e capa).
-- A música toca num aparelho **dessa conta** que esteja ativo: o app do Spotify aberto no celular, ou a Alexa
-  vinculada a essa conta. Sem nenhum, aparece o aviso "Nenhum aparelho".
-- As capas ficam guardadas na placa; cabem cerca de 28. Capas além disso aparecem como ♪.
+- A música toca num aparelho **dessa conta**:
+  - se algo está tocando (ou pausado há pouco) num aparelho, toca nele;
+  - se nada está ativo, toca no celular/computador com o app do Spotify aberto; sem nenhum, na Alexa vinculada à conta;
+  - sem nenhum aparelho disponível, aparece o aviso "Nenhum aparelho".
+- As capas ficam guardadas na placa (13 MB reservados: cabem milhares).
 
 ---
 
@@ -98,7 +100,8 @@ esptool --chip esp32 --port /dev/cu.usbmodemXXXX --baud 921600 write-flash \
   0xe000  painel-vX.Y-boot_app0.bin \
   0x10000 painel-vX.Y-app.bin
 ```
-Isso **não apaga** Wi-Fi, Spotify, desenho nem capas. Para descobrir a porta: `ls /dev/cu.usbmodem*` com a placa
+Isso **não apaga** Wi-Fi, Spotify, desenho nem capas. A partir da v1.3 a área de arquivos é maior (13 MB); voltar
+para a v1.2 ou anterior mantém Wi-Fi e Spotify, mas ⚠️ pode apagar capas e desenho (não testado). Para descobrir a porta: `ls /dev/cu.usbmodem*` com a placa
 conectada por um cabo USB-C **de dados**. O `esptool` vem junto com o core do Arduino
 (`arduino-data/packages/esp32/tools/esptool_py/5.1.0/esptool`).
 
@@ -145,7 +148,7 @@ placa e gera música e efeitos ao vivo. O cartão SD não é usado pelo firmware
 | Sintoma | O que fazer |
 |---|---|
 | "Sem Wi-Fi" / "sem conexão" | A placa tenta reconectar sozinha a cada 15 s. Se a rede mudou: ⚙ → Trocar Wi-Fi. |
-| "Nenhum aparelho" no Músicas | Abra o Spotify no celular (ou chame a Alexa) na mesma conta autorizada. |
+| "Nenhum aparelho" no Músicas | Abra o Spotify no celular ou vincule a Alexa à mesma conta autorizada. |
 | "Reautorize o Spotify" | A autorização venceu ou foi revogada: refaça a seção Spotify. |
 | Capas aparecem como ♪ | Ainda baixando (primeira vez) ou acabou o espaço para capas. |
 | Placa travou/reiniciou sozinha | Conecte no Mac e veja a "caixa-preta" (abaixo). |

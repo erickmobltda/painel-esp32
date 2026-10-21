@@ -27,6 +27,7 @@ void setup() {
   powerInit();  // sem PMU a tela ainda funciona, só sem bateria
   // Flash de arquivos (desenho do Pintar, capas do app Músicas); formata na 1ª vez
   if (!LittleFS.begin(true)) Serial.println("[painel] LittleFS indisponivel");
+  else Serial.printf("[painel] LittleFS %u/%u KB\n", LittleFS.usedBytes() / 1024, LittleFS.totalBytes() / 1024);
   soundBegin();
 
   netBegin();

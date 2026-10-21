@@ -239,12 +239,15 @@ static int apiRequest(NetworkClientSecure &client, HTTPClient &http, const char 
                   body.length(), size, elapsed, code >= 400 ? " | " : "", code >= 400 ? body.substring(0, 200).c_str() : "");
   }
   retryAfter = http.header("Retry-After");
+  // begin() não limpa os cabeçalhos do pedido anterior, só end() (com setReuse a conexão continua aberta).
+  // Sem isso eles se acumulavam: depois de um PUT com corpo, todo pedido seguinte ia com "Content-Length: 140"
+  // sem corpo e o Spotify respondia 400 para sempre
+  http.end();
   if (code < 0) {
     char tlsError[100] = "";
     client.lastError(tlsError, sizeof(tlsError));
     Serial.printf("[spotify] conexao falhou: %s | TLS: %s\n", http.errorToString(code).c_str(), tlsError);
     // conexão caiu: fecha tudo para a próxima tentativa abrir do zero
-    http.end();
     client.stop();
   }
   xSemaphoreGive(httpsMutex);
@@ -613,7 +616,8 @@ static bool nextMissingThumb(SpPlaylistItem &out) {
 }
 
 // Toca a música dentro da playlist (segue a playlist depois). Sem aparelho ativo (404), escolhe um da lista:
-// de preferência uma caixa de som (a Alexa aparece como "Speaker"), senão o primeiro.
+// de preferência o celular/computador (só aparece com o app do Spotify aberto: alguém escolheu ouvir ali),
+// senão uma caixa de som (a Alexa aparece como "Speaker" mesmo parada).
 static void playInPlaylist(NetworkClientSecure &client, HTTPClient &http) {
   xSemaphoreTake(stateMutex, portMAX_DELAY);
   String body = "{\"context_uri\":\"spotify:playlist:" + playlistId + "\",\"offset\":{\"uri\":\"" + playTrackUri + "\"}}";
@@ -626,9 +630,12 @@ static void playInPlaylist(NetworkClientSecure &client, HTTPClient &http) {
     deserializeJson(doc, resp);
     String deviceId;
     for (JsonObject d : doc["devices"].as<JsonArray>()) {
+      Serial.printf("[musicas] aparelho: %s (%s)%s%s\n", d["name"] | "?", d["type"] | "?",
+                    (d["is_active"] | false) ? " ativo" : "", (d["is_restricted"] | false) ? " restrito" : "");
       if (d["is_restricted"] | false) continue;
-      if (deviceId.isEmpty() || strcmp(d["type"] | "", "Speaker") == 0) deviceId = d["id"].as<String>();
-      if (strcmp(d["type"] | "", "Speaker") == 0) break;
+      bool speaker = strcmp(d["type"] | "", "Speaker") == 0;
+      if (deviceId.isEmpty() || !speaker) deviceId = d["id"].as<String>();
+      if (!speaker) break;
     }
     if (deviceId.isEmpty()) {
       setNotice("Nenhum aparelho: abra o Spotify no celular ou chame a Alexa");
