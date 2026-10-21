@@ -37,7 +37,10 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 - (histórico) Ideia em discussão: app de músicas para a filha (capas favoritas → tocar na Alexa). Descoberto: a Alexa toca na
   **conta Spotify da filha** (cada conta só enxerga seus aparelhos) → provavelmente autorizar a conta dela (User Management).
   Teste: `GET /me/player/devices` na conta do usuário veio vazio com nada tocando.
-- Próximas: melhorias que o usuário quer discutir; terminar testes da 9 → **11** README final (a 10, capa, já foi feita na 5) → **12** desempenho.
+- **Etapa 11 (README final) concluída (2026-10-21)**: `README.md` para o usuário (uso, botões, bateria, Wi-Fi, Spotify,
+  renovação do token, playlist, gravação por release ou compilando, restauração de fábrica, diagnóstico).
+- Próximas: **testes pendentes na placa** (religar pelo PWR após desligamento automático; segurar PWR desliga;
+  testes da etapa 9; `tools/spotify_auth.py`) → release v1.3 → **12** desempenho (precisa da placa).
   Itens do checklist ainda sem confirmação do usuário: bateria escurece/apaga/acorda; sem Wi-Fi; script `tools/spotify_auth.py`
   (renovação do token sem regravar) — o usuário usou só o fluxo pela página da placa.
 - **Etapa 12 (nova, última, pedido do usuário)**: investigar e melhorar desempenho do Spotify (ver "Pendências de desempenho").
