@@ -132,7 +132,13 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 - Atividade = qualquer toque (`displayLastTouch`, inclusive no jogo) ou partida em andamento (`gamePlaying()`).
 - Tela apagada: o `loop()` não desenha (nem LVGL nem jogo), só `netLoop()`; consulta ao Spotify suspensa
   (`spotifySetSuspended`); música do jogo para. O toque que acorda é engolido até soltar (`displaySetSleeping`).
-- Botão PWR: não é tocado pelo firmware (desligamento por pressão longa continua com o AXP2101).
+- Botões da placa (etiqueta): **PWR · RST · BOOT** (esq. → dir.). RST reinicia (hardware). PWR = GPIO 36, nível alto
+  quando apertado: **toque rápido (< 1 s) apaga/acende a tela** (decisão do usuário; também acende tocando na tela);
+  pressão longa continua com o AXP2101 (desligar) — o firmware não configura esse tempo.
+- **Caixa-preta** `/diag.txt` (LittleFS, até 8 KB): boot + motivo do reinício, mudanças de tela com o motivo (toque com
+  coordenada, USB, jogo, botão PWR) e mudanças USB/bateria. Serial: `i` mostra, `I` apaga.
+- ⚠️ Em aberto: usuário relatou que na bateria a tela escurece mas não apaga sozinha (no teste com bateria simulada
+  apagou em 5 min). Aguardando teste real na bateria para ler a caixa-preta.
 - Depuração: `b` pelo serial simula bateria com o USB ligado.
 - Depuração: `g` pelo serial abre o jogo.
 

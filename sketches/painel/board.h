@@ -26,3 +26,4 @@
 #define PIN_I2S_DOUT 12
 
 #define PIN_PMU_IRQ 35
+#define PIN_PWR_BUTTON 36  // botão PWR, nível alto quando apertado (exemplo oficial 03_button_example)

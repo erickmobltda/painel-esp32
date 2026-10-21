@@ -43,12 +43,17 @@ static void mapTouch(int16_t &x, int16_t &y) {
 }
 
 static volatile uint32_t lastTouch = 0;
+static int16_t lastTouchX = 0, lastTouchY = 0;
 static bool sleeping = false, swallow = false;
 
 uint8_t displayReadTouch(int16_t *x, int16_t *y, uint8_t max) {
   uint8_t n = touch.getPoint(x, y, max);
   if (n > max) n = max;
-  if (n) lastTouch = millis();
+  if (n) {
+    lastTouch = millis();
+    lastTouchX = x[0];
+    lastTouchY = y[0];
+  }
   if (n && sleeping) swallow = true;  // o toque que acorda não vale como clique
   if (swallow) {
     if (n == 0) swallow = false;
@@ -60,6 +65,11 @@ uint8_t displayReadTouch(int16_t *x, int16_t *y, uint8_t max) {
 
 uint32_t displayLastTouch() {
   return lastTouch;
+}
+
+void displayLastTouchPoint(int16_t &x, int16_t &y) {
+  x = lastTouchX;
+  y = lastTouchY;
 }
 
 void displaySetSleeping(bool s) {
