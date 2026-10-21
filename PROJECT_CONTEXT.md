@@ -39,10 +39,13 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   Teste: `GET /me/player/devices` na conta do usuário veio vazio com nada tocando.
 - **Etapa 11 (README final) concluída (2026-10-21)**: `README.md` para o usuário (uso, botões, bateria, Wi-Fi, Spotify,
   renovação do token, playlist, gravação por release ou compilando, restauração de fábrica, diagnóstico).
-- Próximas: **testes pendentes na placa** (religar pelo PWR após desligamento automático; segurar PWR desliga;
-  testes da etapa 9; `tools/spotify_auth.py`) → release v1.3 → **12** desempenho (precisa da placa).
-  Itens do checklist ainda sem confirmação do usuário: bateria escurece/apaga/acorda; sem Wi-Fi; script `tools/spotify_auth.py`
-  (renovação do token sem regravar) — o usuário usou só o fluxo pela página da placa.
+- **Testes na placa (2026-10-21, usuário):** segurar PWR desliga e um toque rápido religa ✔; desligamento automático
+  aos 10 min e religar pelo PWR ✔; toque que acorda não clica (escura e apagada) ✔; jogo não escurece ✔.
+  Não feitos: Wi-Fi caindo (usuário não consegue desligar o roteador), noite na bateria (fará), `tools/spotify_auth.py` (depois).
+  **Bug aberto:** Músicas sem aparelho ativo (Spotify fechado, Alexa parada) → spinner na capa e depois a placa voltou à
+  tela inicial = provável reinício (só o botão ⌂ leva à inicial). Caminho: `playInPlaylist` 404 → GET /devices.
+  Investigar com caixa-preta (`i`, deve ter "boot, motivo") + coredump antes de mexer.
+- Próximas: bug acima → release v1.3 → **12** desempenho (precisa da placa).
 - **Etapa 12 (nova, última, pedido do usuário)**: investigar e melhorar desempenho do Spotify (ver "Pendências de desempenho").
 
 ## Estrutura do sketch `sketches/painel`

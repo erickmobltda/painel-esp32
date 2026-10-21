@@ -21,15 +21,16 @@ Na lateral, da esquerda para a direita (está escrito na etiqueta de trás): **P
 | Botão | Ação |
 |---|---|
 | **PWR**, toque rápido | Apaga/acende a tela. |
-| **PWR**, segurar alguns segundos | Desliga a placa (feito pelo chip de energia, não pelo firmware). Com a placa desligada, o PWR liga de novo. ⚠️ *Ainda não confirmado na placa.* |
+| **PWR**, segurar alguns segundos | Desliga a placa (feito pelo chip de energia, não pelo firmware). |
+| **PWR**, com a placa desligada | Um toque rápido liga de novo. |
 | **RST** | Reinicia a placa (como desligar e ligar). |
 | **BOOT** | Só é usado para gravar firmware, se a gravação travar (ver abaixo). |
 
 ### Bateria
 - **No USB**: a tela fica sempre acesa.
 - **Na bateria**, sem ninguém mexer: escurece em **1 min**, apaga em **5 min** e **desliga sozinha em 10 min**.
-  Tocar na tela acende enquanto ela só estiver apagada; depois de desligada, ligue pelo **PWR**
-  (⚠️ religar pelo PWR depois do desligamento automático ainda não foi confirmado na placa).
+  Tocar na tela acende enquanto ela só estiver escura ou apagada (o toque só acende, não aperta botão);
+  depois de desligada, ligue com um toque no **PWR**.
 - Durante uma partida do jogo a tela não escurece.
 - A porcentagem da bateria pode ficar estranha nos primeiros usos: o chip de energia aprende a curva da bateria
   depois de uma carga e descarga completas.
