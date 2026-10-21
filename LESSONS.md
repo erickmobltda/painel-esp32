@@ -105,3 +105,11 @@
 ## [2026-10-20] — Estado otimista na interface
 - **What happened**: no Músicas, o ícone ⏯ e a moldura só mudavam depois da resposta do Spotify (segundos) e pareciam não funcionar.
 - **Rule**: ao tocar, atualizar a tela na hora (estado otimista + indicador de carregamento) e deixar a próxima consulta corrigir.
+
+## [2026-10-21] — "Tela apagada" não é economia de bateria
+- **What happened**: com a tela apagada a placa gastava ~10%/h (CPU 240 MHz, Wi-Fi e periféricos ligados) e zerou a bateria à noite.
+- **Rule**: para ficar parada na bateria, desligar de verdade (`pmu.shutdown()` no AXP2101); medir pela caixa-preta (% e mV com horário).
+
+## [2026-10-21] — Ler o coredump antes de adivinhar a causa de um travamento
+- **What happened**: a caixa-preta mostrou "motivo do reinício 4" (panic); o coredump na flash (ELF) apontou `abort()` em `lock_init_generic` na `tcpip_thread` = RAM interna esgotada.
+- **Rule**: `esptool read-flash 0x3F0000 0x10000 coredump.bin`; conferir o hash do ELF (`ESP_CORE_DUMP_INFO`) com o `painel.ino.elf` gravado; decodificar o PC e varrer a pilha da tarefa com `xtensa-esp32-elf-addr2line`.

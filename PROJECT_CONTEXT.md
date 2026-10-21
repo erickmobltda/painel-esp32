@@ -137,8 +137,13 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   pressão longa continua com o AXP2101 (desligar) — o firmware não configura esse tempo.
 - **Caixa-preta** `/diag.txt` (LittleFS, até 8 KB): boot + motivo do reinício, mudanças de tela com o motivo (toque com
   coordenada, USB, jogo, botão PWR) e mudanças USB/bateria. Serial: `i` mostra, `I` apaga.
-- ⚠️ Em aberto: usuário relatou que na bateria a tela escurece mas não apaga sozinha (no teste com bateria simulada
-  apagou em 5 min). Aguardando teste real na bateria para ler a caixa-preta.
+- Caixa-preta de 2026-10-20/21 (bateria real): escureceu e apagou certo; bateria ~10%/h com tela apagada (CPU 240 MHz +
+  Wi-Fi + periféricos ligados) → zerou à noite. Houve 1 travamento ao acordar por toque: coredump (partição `coredump`
+  0x3F0000, ELF) → `abort()` em `lock_init_generic` (newlib locks.c:77) na `tcpip_thread` = sem RAM interna para criar
+  um lock. Leitura: `esptool read-flash 0x3F0000 0x10000 coredump.bin` + addr2line (ver LESSONS).
+- **Desligamento automático (decisão do usuário)**: na bateria, parada 10 min → `pmu.shutdown()` (AXP2101). Testado
+  com bateria simulada: desligou aos 600 s (até a porta USB sumiu). Religar = toque no PWR — **não confirmado ainda**.
+  Toque na tela não acorda a placa desligada. A caixa-preta agora grava a RAM interna livre/maior bloco em cada evento.
 - Depuração: `b` pelo serial simula bateria com o USB ligado.
 - Depuração: `g` pelo serial abre o jogo.
 

@@ -13,3 +13,5 @@ struct PowerStatus {
 // PMU AXP2101: só leitura (não altera tensões). Requer Wire.begin() antes.
 bool powerInit();
 PowerStatus powerRead();
+// Desliga a placa inteira pelo AXP2101 (mesmo efeito de segurar o PWR). Religa com um toque no PWR.
+void powerShutdown();

@@ -11,6 +11,7 @@
 
 static const uint32_t DIM_AFTER_MS = 60000;
 static const uint32_t OFF_AFTER_MS = 300000;
+static const uint32_t SHUTDOWN_AFTER_MS = 600000;  // parada na bateria: desliga a placa (decisão do usuário)
 static const uint8_t BRIGHT = 255, DIM = 40;
 static const uint32_t USB_CHECK_MS = 1000;
 
@@ -30,6 +31,10 @@ void idleDiag(const char *fmt, ...) {
   va_start(args, fmt);
   vsnprintf(line + n, sizeof(line) - n, fmt, args);
   va_end(args);
+  // RAM interna livre / maior bloco: para entender travamentos por falta de memória (como o de 2026-10-20)
+  n = strlen(line);
+  snprintf(line + n, sizeof(line) - n, " | heap %u/%u", heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024,
+           heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024);
   Serial.printf("[diag] %s\n", line);
   File f = LittleFS.open(DIAG_PATH, "a");
   if (!f) return;
@@ -126,6 +131,12 @@ bool idleLoop() {
   }
 
   uint32_t idle = now - lastActivity;
+  // Tela apagada não economiza o bastante (~10%/h com Wi-Fi e processador ligados): na bateria, desliga de vez
+  if (!onUsb && idle >= SHUTDOWN_AFTER_MS) {
+    idleDiag("desligando apos %u min parada na bateria", SHUTDOWN_AFTER_MS / 60000);
+    delay(100);
+    powerShutdown();
+  }
   setScreen(forcedOff || idle >= OFF_AFTER_MS ? Screen::Off : idle >= DIM_AFTER_MS ? Screen::Dim : Screen::On);
   return screen != Screen::Off;
 }

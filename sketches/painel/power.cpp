@@ -23,6 +23,10 @@ bool powerInit() {
   return true;
 }
 
+void powerShutdown() {
+  if (pmuOk) pmu.shutdown();
+}
+
 PowerStatus powerRead() {
   PowerStatus s = {false, -1, 0, false, false};
   if (!pmuOk) return s;
