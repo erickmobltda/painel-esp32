@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <vector>
+#include <esp_heap_caps.h>
 
 #define SPOTIFY_REDIRECT_URI "http://127.0.0.1:8888/callback"
 #define SPOTIFY_SCOPES "user-read-playback-state user-read-currently-playing user-modify-playback-state"
@@ -67,14 +68,27 @@ SpQueue spotifyQueue();
 
 // ---------- App Músicas (playlist da criança) ----------
 static const int SP_THUMB_SIZE = 112;  // lado das miniaturas gravadas na flash (RGB565 cru)
+// Texto em tamanho fixo e a lista inteira na PSRAM: com String cada campo era um bloco pequeno na RAM interna
+// (~8 KB por cópia da lista, e há até 3 cópias ao atualizar), que falta para as conexões TLS
 struct SpPlaylistItem {
-  String uri, albumId, artUrl;
+  char uri[48] = "";      // spotify:track:<22>
+  char albumId[24] = "";  // <22>
+  char artUrl[80] = "";   // https://i.scdn.co/image/<40>; vazio = sem capa
+};
+template <typename T> struct SpPsramAlloc {
+  using value_type = T;
+  SpPsramAlloc() = default;
+  template <typename U> SpPsramAlloc(const SpPsramAlloc<U> &) {}
+  T *allocate(size_t n) { return (T *)heap_caps_malloc(n * sizeof(T), MALLOC_CAP_SPIRAM); }
+  void deallocate(T *p, size_t) { heap_caps_free(p); }
+  template <typename U> bool operator==(const SpPsramAlloc<U> &) const { return true; }
+  template <typename U> bool operator!=(const SpPsramAlloc<U> &) const { return false; }
 };
 struct SpPlaylist {
   bool loaded = false;  // tem itens (do cache ou da internet)
   bool failed = false;  // falhou e não há cache
   uint32_t version = 0;
-  std::vector<SpPlaylistItem> items;
+  std::vector<SpPlaylistItem, SpPsramAlloc<SpPlaylistItem>> items;
 };
 // Capa grande só na tela do Spotify; o app Músicas desliga e no lugar baixa as miniaturas que faltam.
 void spotifySetArtWanted(bool wanted);

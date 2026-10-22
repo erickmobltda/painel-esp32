@@ -505,13 +505,13 @@ static bool saveThumb(NetworkClientSecure &client, HTTPClient &http, const SpPla
     File f = LittleFS.open(spotifyThumbPath(it.albumId), "w");
     ok = f && f.write((const uint8_t *)thumb, size) == size;
     f.close();
-    if (!ok) Serial.printf("[musicas] falha ao gravar a capa %s na flash\n", it.albumId.c_str());
+    if (!ok) Serial.printf("[musicas] falha ao gravar a capa %s na flash\n", it.albumId);
     free(thumb);
   }
   free(pixels);
   if (ok) {
     thumbsVersion++;
-    Serial.printf("[musicas] capa %s gravada (flash: %u de %u KB usados)\n", it.albumId.c_str(),
+    Serial.printf("[musicas] capa %s gravada (flash: %u de %u KB usados)\n", it.albumId,
                   LittleFS.usedBytes() / 1024, LittleFS.totalBytes() / 1024);
   }
   return ok;
@@ -520,7 +520,7 @@ static bool saveThumb(NetworkClientSecure &client, HTTPClient &http, const SpPla
 static void savePlaylistCache(const SpPlaylist &pl) {
   File f = LittleFS.open(PLAYLIST_CACHE, "w");
   if (!f) return;
-  for (const SpPlaylistItem &it : pl.items) f.printf("%s\t%s\t%s\n", it.uri.c_str(), it.albumId.c_str(), it.artUrl.c_str());
+  for (const SpPlaylistItem &it : pl.items) f.printf("%s\t%s\t%s\n", it.uri, it.albumId, it.artUrl);
   f.close();
 }
 static void loadPlaylistCache(SpPlaylist &pl) {
@@ -530,7 +530,11 @@ static void loadPlaylistCache(SpPlaylist &pl) {
     String line = f.readStringUntil('\n');
     int a = line.indexOf('\t'), b = line.indexOf('\t', a + 1);
     if (a < 0 || b < 0) continue;
-    pl.items.push_back({line.substring(0, a), line.substring(a + 1, b), line.substring(b + 1)});
+    SpPlaylistItem it;
+    strlcpy(it.uri, line.substring(0, a).c_str(), sizeof(it.uri));
+    strlcpy(it.albumId, line.substring(a + 1, b).c_str(), sizeof(it.albumId));
+    strlcpy(it.artUrl, line.substring(b + 1).c_str(), sizeof(it.artUrl));
+    pl.items.push_back(it);
   }
   f.close();
   pl.loaded = !pl.items.empty();
@@ -568,14 +572,15 @@ static void fetchPlaylist(NetworkClientSecure &client, HTTPClient &http) {
       JsonObject item = entry["item"];
       if (item.isNull() || !item["uri"].is<const char *>()) continue;
       SpPlaylistItem it;
-      it.uri = item["uri"].as<String>();
-      it.albumId = item["album"]["id"] | "";
+      strlcpy(it.uri, item["uri"], sizeof(it.uri));
+      strlcpy(it.albumId, item["album"]["id"] | "", sizeof(it.albumId));
       int best = INT_MAX;
       for (JsonObject img : item["album"]["images"].as<JsonArray>()) {  // menor imagem com >= 150 px (a de 300)
         int w = img["width"] | 0;
-        if (w >= 150 && w < best) {
+        const char *url = img["url"] | "";
+        if (w >= 150 && w < best && strlen(url) < sizeof(it.artUrl)) {  // URL maior que o campo: fica sem capa
           best = w;
-          it.artUrl = img["url"].as<String>();
+          strlcpy(it.artUrl, url, sizeof(it.artUrl));
         }
       }
       result.items.push_back(it);
@@ -601,16 +606,18 @@ static void fetchPlaylist(NetworkClientSecure &client, HTTPClient &http) {
 // Próxima miniatura que ainda não está na flash (álbuns repetidos dividem a mesma). false = todas prontas.
 static bool nextMissingThumb(SpPlaylistItem &out) {
   if (thumbsComplete) return false;
-  xSemaphoreTake(stateMutex, portMAX_DELAY);
-  std::vector<SpPlaylistItem> items = playlistData.items;  // confere a flash fora do mutex
-  xSemaphoreGive(stateMutex);
-  for (const SpPlaylistItem &it : items) {
-    if (it.albumId.length() && it.artUrl.length() && !LittleFS.exists(spotifyThumbPath(it.albumId))) {
-      out = it;
-      return true;
+  // Um item por vez (confere a flash fora do mutex): copiar a lista inteira gastava ~10 KB de RAM interna
+  for (size_t i = 0;; i++) {
+    xSemaphoreTake(stateMutex, portMAX_DELAY);
+    size_t count = playlistData.items.size();
+    if (i < count) out = playlistData.items[i];
+    xSemaphoreGive(stateMutex);
+    if (i >= count) {
+      thumbsComplete = count > 0;
+      break;
     }
+    if (out.albumId[0] && out.artUrl[0] && !LittleFS.exists(spotifyThumbPath(out.albumId))) return true;
   }
-  thumbsComplete = !items.empty();
   if (thumbsComplete) Serial.println("[musicas] nada mais para baixar");
   return false;
 }
@@ -694,7 +701,15 @@ static void spotifyTask(void *) {
       client.stop();
       artHttp.end();
       artClient.stop();
-      ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+      // Deixa o access token pronto (renovar leva ~1,3 s): abrir o Músicas só paga a conexão com a API.
+      // Não com a tela apagada (economia) nem no jogo (Wi-Fi desligado)
+      xSemaphoreTake(stateMutex, portMAX_DELAY);
+      bool canRefresh = cfg.spRefreshToken.length() && !needsReauth;
+      xSemaphoreGive(stateMutex);
+      if (!suspended && canRefresh && WiFi.status() == WL_CONNECTED &&
+          (accessToken.length() == 0 || (int32_t)(accessTokenExpiresAt - millis()) < 300000))
+        refreshAccessToken();
+      ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(60000));
       continue;
     }
     // App Músicas baixando capas: só a conexão de imagens fica aberta (duas sessões TLS não cabem na
@@ -708,7 +723,7 @@ static void spotifyTask(void *) {
         // falhou: marca como sem capa nesta sessão para não ficar tentando em laço
         xSemaphoreTake(stateMutex, portMAX_DELAY);
         for (SpPlaylistItem &it : playlistData.items)
-          if (it.albumId == missing.albumId) it.artUrl = "";
+          if (strcmp(it.albumId, missing.albumId) == 0) it.artUrl[0] = 0;
         xSemaphoreGive(stateMutex);
       }
       continue;

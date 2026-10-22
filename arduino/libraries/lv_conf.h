@@ -60,10 +60,11 @@
     #endif
 
 #else       /*LV_MEM_CUSTOM*/
-    #define LV_MEM_CUSTOM_INCLUDE <stdlib.h>   /*Header for the dynamic memory function*/
-    #define LV_MEM_CUSTOM_ALLOC   malloc
+    /*Painel: objetos do LVGL na PSRAM (malloc comum põe blocos < 4 KB na RAM interna, que falta para o TLS)*/
+    #define LV_MEM_CUSTOM_INCLUDE <esp32-hal-psram.h>   /*Header for the dynamic memory function*/
+    #define LV_MEM_CUSTOM_ALLOC   ps_malloc
     #define LV_MEM_CUSTOM_FREE    free
-    #define LV_MEM_CUSTOM_REALLOC realloc
+    #define LV_MEM_CUSTOM_REALLOC ps_realloc
 #endif     /*LV_MEM_CUSTOM*/
 
 /*Number of the intermediate memory buffer used during rendering and other internal processing mechanisms.
