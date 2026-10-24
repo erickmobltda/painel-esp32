@@ -307,6 +307,30 @@ static void handle(Snd s) {
     case Snd::TitleMusic: musicStart(&TITLE, 0.1); break;
     case Snd::StopMusic: musicStop(true); break;
     case Snd::Beep: tone(W_SQUARE, 880, t, 0.12, 0.25f, BUS_SFX); break;
+    case Snd::Correct: {
+      static const int n[4] = {72, 76, 79, 84};  // dó-mi-sol-dó
+      for (int i = 0; i < 4; i++) {
+        tone(W_TRIANGLE, mtof(n[i]), t + i * 0.08, i == 3 ? 0.35 : 0.1, 0.4f, BUS_SFX);
+        tone(W_SQUARE, mtof(n[i]), t + i * 0.08, i == 3 ? 0.35 : 0.1, 0.08f, BUS_SFX);
+      }
+      break;
+    }
+    case Snd::Wrong:
+      tone(W_TRIANGLE, mtof(57), t, 0.16, 0.4f, BUS_SFX);
+      tone(W_TRIANGLE, mtof(53), t + 0.18, 0.3, 0.4f, BUS_SFX);
+      break;
+    case Snd::LevelUp: {
+      static const int n[6] = {60, 64, 67, 72, 67, 72};
+      static const float when[6] = {0, 0.1f, 0.2f, 0.3f, 0.5f, 0.62f};
+      for (int i = 0; i < 6; i++) {
+        double d = i == 5 ? 0.6 : 0.12;
+        tone(W_SQUARE, mtof(n[i]), t + when[i], d, 0.18f, BUS_SFX);
+        tone(W_TRIANGLE, mtof(n[i] + 12), t + when[i], d, 0.2f, BUS_SFX);
+      }
+      tone(W_TRIANGLE, mtof(64 + 12), t + 0.62, 0.6, 0.15f, BUS_SFX);  // acorde no final
+      tone(W_TRIANGLE, mtof(67 + 12), t + 0.62, 0.6, 0.15f, BUS_SFX);
+      break;
+    }
   }
 }
 
@@ -317,6 +341,7 @@ static TaskHandle_t task = nullptr;
 static volatile bool stopRequested = false;
 static SemaphoreHandle_t stopped;
 static volatile bool muted = false;
+static volatile bool ignoreMute = false;
 static int volume = 80;
 static es8311_handle_t codec = nullptr;
 
@@ -356,7 +381,7 @@ static void renderBlock(int16_t *out) {
       mix[s - now] += x * g;
     }
   }
-  float master = muted ? 0 : 1;
+  float master = muted && !ignoreMute ? 0 : 1;
   for (int k = 0; k < BLOCK; k++) {
     float y = mix[k] * master;
     if (y > 1) y = 1;
@@ -451,3 +476,4 @@ void soundSetMuted(bool m) {
   prefs.end();
 }
 bool soundMuted() { return muted; }
+void soundIgnoreMute(bool ignore) { ignoreMute = ignore; }

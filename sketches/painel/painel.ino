@@ -62,7 +62,7 @@ void loop() {
   paintStartIfRequested();
   netLoop();
 
-  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela; 'q' busca a fila; 'g' abre o jogo; 'b' simula bateria; 'p' abre o Pintar; 'm' abre o Músicas; 'i' mostra / 'I' apaga a caixa-preta de energia
+  // Depuração pelo serial: 's' liga/desliga a consulta ao Spotify sem abrir a tela; 'q' busca a fila; 'g' abre o jogo; 'b' simula bateria; 'p' abre o Pintar; 'm' abre o Músicas; 'l' abre o Ler; 'i' mostra / 'I' apaga a caixa-preta de energia
   if (Serial.available()) {
     char c = Serial.read();
     if (c == 's') {
@@ -78,6 +78,8 @@ void loop() {
       idleDiagDump(c == 'I');
     } else if (c == 'm') {
       uiShowMusic();
+    } else if (c == 'l') {
+      uiShowReading();
     } else if (c == 'p') {
       paintStart();
     } else if (c == 'b') {

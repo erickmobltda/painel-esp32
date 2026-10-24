@@ -13,6 +13,47 @@ No topo da tela inicial: Wi-Fi, ⚙ Configurações e bateria.
 
 ---
 
+## Hardware
+
+Placa **Waveshare ESP32-Touch-LCD-3.5** (não confundir com a ESP32-**S3**-Touch-LCD-3.5, que é outra placa e não roda
+este firmware).
+
+| Peça | O que é | Uso no Painel |
+|---|---|---|
+| Processador | ESP32-D0WDR2-V3, dual-core 240 MHz, Wi-Fi 2,4 GHz, Bluetooth 4.2 | tudo |
+| Memória | 520 KB SRAM + 2 MB PSRAM + 16 MB flash | firmware 3 MB, arquivos (capas, desenho) 13 MB |
+| Tela | 3,5" IPS 320×480, controlador ST7796S (SPI) | tela |
+| Toque | FT6336, capacitivo (I2C) | toque |
+| Áudio | codec ES8311 + conector MX1.25 para alto-falante | sons |
+| Energia | AXP2101 + conector MX1.25 para bateria Li-ion 3,7 V | bateria, carga, botão PWR |
+| Expansor | TCA9554 | reset da tela/toque, liga o amplificador |
+| Outros | relógio PCF85063, slot microSD, microfone, USB-C | não usados |
+
+Links oficiais da Waveshare:
+- Página do produto: https://www.waveshare.com/esp32-touch-lcd-3.5.htm
+- Wiki (especificações, bibliotecas, exemplos): https://www.waveshare.com/wiki/ESP32-Touch-LCD-3.5
+- Documentação nova: https://docs.waveshare.com/ESP32-Touch-LCD-3.5
+- Esquema elétrico (Rev 1.1): https://files.waveshare.com/wiki/ESP32-Touch-LCD-3.5/ESP32-Touch-LCD-3.5_Rev1.1.pdf
+- Código de exemplo e bibliotecas: https://github.com/waveshareteam/ESP32-Touch-LCD-3.5
+
+## Requisitos mínimos
+
+**Para usar:**
+- A placa acima. A bateria é opcional (a Waveshare vende com ou sem): sem ela, funciona só ligada no USB-C.
+- Alto-falante no conector MX1.25, para ouvir os sons. Sem ele, o resto funciona.
+- Wi-Fi **2,4 GHz**: a placa não enxerga redes de 5 GHz. O Jogo e o Pintar funcionam sem internet.
+- Para o app Músicas: conta **Spotify Premium** (o Spotify só deixa controlar o que toca em contas Premium), o app do
+  Spotify aberto no celular/computador ou uma Alexa ligada ao Spotify, e um app criado no painel de desenvolvedor do
+  Spotify (passo a passo em [Configuração](#3-spotify-uma-vez-a-cada-6-meses)).
+
+**Para gravar o firmware:**
+- Cabo USB-C **de dados** (alguns cabos só carregam).
+- Versão pronta: só o `esptool` ([Jeito rápido](#jeito-rápido-uma-versão-pronta-releases)).
+- Compilar: Mac com Arduino IDE (traz o `arduino-cli` 1.5.1), `git` e ~7 GB livres para o core esp32 3.3.5 (o
+  core traz compiladores para vários chips) e as bibliotecas. Testado só no macOS. Python 3 só para os scripts de `tools/` (o do Mac serve).
+
+---
+
 ## Uso no dia a dia
 
 ### Botões da placa
@@ -47,6 +88,10 @@ Na primeira vez (ou em ⚙ → **Trocar Wi-Fi**) a placa cria a própria rede:
 1. A tela mostra o nome da rede (**Painel-XXXX**) e uma senha de 8 dígitos.
 2. No celular, entre nessa rede. A página de configuração abre sozinha; se não abrir, acesse **http://192.168.4.1**.
 3. Escolha a rede da casa (precisa ser **2,4 GHz**), digite a senha e salve. A placa reinicia e conecta.
+
+A placa lembra até **5 redes** (ex.: casa e casa da avó): ao ligar ou quando a conexão cai, ela procura as redes
+por perto e conecta na salva de sinal mais forte. Cadastrar uma rede nova não apaga as outras; com mais de 5, a
+mais antiga é esquecida. Cadastrar de novo uma rede já salva troca a senha dela.
 
 ### 2. Página de configuração da placa
 Com o Wi-Fi conectado, abra ⚙ na placa: ela mostra o endereço (`http://192.168.x.x` ou `http://painel.local`) e um

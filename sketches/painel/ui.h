@@ -4,3 +4,4 @@
 void uiShowHome();
 void uiShowWifiSetup();
 void uiShowMusic();
+void uiShowReading();

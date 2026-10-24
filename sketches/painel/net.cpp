@@ -304,20 +304,53 @@ void netStartSetup() {
   Serial.printf("[net] modo configuracao: rede %s, http://%s\n", apSsid.c_str(), WiFi.softAPIP().toString().c_str());
 }
 
+// Várias redes salvas: procura as que estão por perto (busca assíncrona, a tela não trava) e conecta na de sinal
+// mais forte. Com uma só, conecta direto.
+static String target;  // rede da tentativa atual
+static bool scanning = false;
+static void connectTo(const WifiNet &net) {
+  target = net.ssid;
+  WiFi.begin(net.ssid.c_str(), net.pass.c_str());
+  Serial.printf("[net] conectando em %s\n", net.ssid.c_str());
+}
+static void connectBest() {
+  if (cfg.wifiCount <= 1) {
+    connectTo(cfg.wifi[0]);
+    return;
+  }
+  WiFi.disconnect();
+  WiFi.scanNetworks(true);
+  scanning = true;
+  Serial.printf("[net] procurando as %d redes salvas\n", cfg.wifiCount);
+}
+static void scanDone(int found) {
+  scanning = false;
+  int best = -1, bestRssi = INT_MIN;
+  for (int i = 0; i < found; i++)
+    for (int k = 0; k < cfg.wifiCount; k++)
+      if (WiFi.SSID(i) == cfg.wifi[k].ssid && WiFi.RSSI(i) > bestRssi) {
+        best = k;
+        bestRssi = WiFi.RSSI(i);
+      }
+  WiFi.scanDelete();
+  if (best >= 0) connectTo(cfg.wifi[best]);
+  else if (found < 0) connectTo(cfg.wifi[0]);  // a busca falhou: tenta a última cadastrada
+  else Serial.printf("[net] nenhuma rede salva por perto (%d redes vistas)\n", found);
+}
+
 void netBegin() {
   configLoad(cfg);
   pin = randomDigits(6);
   authState = randomDigits(16);
-  if (cfg.wifiSsid.length() == 0) {
+  if (cfg.wifiCount == 0) {
     netStartSetup();
     return;
   }
   WiFi.mode(WIFI_STA);
   WiFi.setAutoReconnect(true);
-  WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+  connectBest();
   clockBegin();
   startServer();
-  Serial.printf("[net] conectando em %s\n", cfg.wifiSsid.c_str());
 }
 
 void netLoop() {
@@ -329,13 +362,19 @@ void netLoop() {
   static wl_status_t last = WL_IDLE_STATUS;
   static uint32_t lastAttempt = millis();
   wl_status_t now = WiFi.status();
+  if (scanning) {
+    int found = WiFi.scanComplete();
+    if (found == WIFI_SCAN_RUNNING) return;
+    scanDone(found);
+    lastAttempt = millis();
+  }
   // O auto-reconnect do core só age quando uma conexão já feita cai; se a tentativa
   // inicial falhar (ex.: roteador recusou), tenta de novo periodicamente.
   if (!setupMode && !paused && now != WL_CONNECTED && millis() - lastAttempt > WIFI_RETRY_MS) {
     lastAttempt = millis();
     Serial.println("[net] nova tentativa de conexao Wi-Fi");
     WiFi.disconnect();
-    WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
+    connectBest();
   }
   if (!setupMode && now != last) {
     last = now;
@@ -354,6 +393,7 @@ void netLoop() {
 void netPause() {
   if (setupMode || paused) return;
   paused = true;
+  scanning = false;  // uma busca em andamento é descartada (o Wi-Fi vai desligar)
   if (mdnsStarted) {
     MDNS.end();
     mdnsStarted = false;
@@ -367,8 +407,8 @@ void netResume() {
   if (!paused) return;
   paused = false;
   WiFi.mode(WIFI_STA);
-  WiFi.begin(cfg.wifiSsid.c_str(), cfg.wifiPass.c_str());
-  Serial.println("[net] Wi-Fi religado, conectando");
+  Serial.println("[net] Wi-Fi religado");
+  connectBest();
 }
 
 NetStatus netStatus() {
@@ -376,7 +416,7 @@ NetStatus netStatus() {
   s.pin = pin;
   s.spotifyConfigured = cfg.spRefreshToken.length() > 0;
   s.spotifyAuthDate = cfg.spAuthDate;
-  s.hasSavedWifi = cfg.wifiSsid.length() > 0;
+  s.hasSavedWifi = cfg.wifiCount > 0;
   if (setupMode) {
     s.mode = NetMode::Setup;
     s.ssid = apSsid;
@@ -384,7 +424,7 @@ NetStatus netStatus() {
     s.ip = WiFi.softAPIP().toString();
     return s;
   }
-  s.ssid = cfg.wifiSsid;
+  s.ssid = target;
   if (WiFi.status() == WL_CONNECTED) {
     s.mode = NetMode::Connected;
     s.ip = WiFi.localIP().toString();

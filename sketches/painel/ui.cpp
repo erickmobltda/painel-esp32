@@ -7,6 +7,7 @@
 #include "game.h"
 #include "paint.h"
 #include "config.h"
+#include "leitura.h"
 
 #include <LittleFS.h>
 #include "sound.h"
@@ -139,6 +140,7 @@ static void refreshHome(lv_timer_t *) {
 static void settingsEvent(lv_event_t *);
 static void spotifyEvent(lv_event_t *);
 static void musicEvent(lv_event_t *);
+static void readingEvent(lv_event_t *) { uiShowReading(); }
 
 static void paintEvent(lv_event_t *) {
   logMemory("pintar");
@@ -174,16 +176,16 @@ void uiShowHome() {
   lv_label_set_text(batteryLabel, "");
   lv_obj_align(batteryLabel, LV_ALIGN_TOP_RIGHT, -10, 12);
 
-  // 3 apps lado a lado (decisão do usuário). A tela "Spotify" (controle remoto) está escondida por enquanto:
+  // 4 apps em grade 2x2. A tela "Spotify" (controle remoto) está escondida por enquanto:
   // o código continua em spotifyEvent(), sem botão.
-  lv_obj_t *musicBtn = createButton(scr, LV_SYMBOL_AUDIO "\nMúsicas", lv_color_hex(0x1DB954), 140, 250, musicEvent);
-  lv_obj_align(musicBtn, LV_ALIGN_BOTTOM_LEFT, 15, -20);
-
-  lv_obj_t *gameBtn = createButton(scr, LV_SYMBOL_PLAY "\nJogo", lv_color_hex(0xE67E22), 140, 250, gameEvent);
-  lv_obj_align(gameBtn, LV_ALIGN_BOTTOM_MID, 0, -20);
-
-  lv_obj_t *paintBtn = createButton(scr, LV_SYMBOL_EDIT "\nPintar", lv_color_hex(0x8E24AA), 140, 250, paintEvent);
-  lv_obj_align(paintBtn, LV_ALIGN_BOTTOM_RIGHT, -15, -20);
+  lv_obj_t *musicBtn = createButton(scr, LV_SYMBOL_AUDIO "  Músicas", lv_color_hex(0x1DB954), 222, 122, musicEvent);
+  lv_obj_set_pos(musicBtn, 12, 56);
+  lv_obj_t *gameBtn = createButton(scr, LV_SYMBOL_PLAY "  Jogo", lv_color_hex(0xE67E22), 222, 122, gameEvent);
+  lv_obj_set_pos(gameBtn, 246, 56);
+  lv_obj_t *paintBtn = createButton(scr, LV_SYMBOL_EDIT "  Pintar", lv_color_hex(0x8E24AA), 222, 122, paintEvent);
+  lv_obj_set_pos(paintBtn, 12, 188);
+  lv_obj_t *readBtn = createButton(scr, LV_SYMBOL_EYE_OPEN "  Ler", lv_color_hex(0x1E88E5), 222, 122, readingEvent);
+  lv_obj_set_pos(readBtn, 246, 188);
 
   loadScreen(scr, "home", refreshHome);
 }
@@ -866,4 +868,170 @@ static void musicEvent(lv_event_t *) {
   spotifySetActive(true);
   loadScreen(scr, "musicas", refreshMusic, 300);
   onLeave = musicLeave;
+}
+
+// ---------- App Ler (palavra + 3 imagens) ----------
+
+static const int LE_CARD = 144, LE_CARD_Y = 166;
+static lv_obj_t *leWordLabel, *leLevelLabel, *leCards[3], *leImgs[3], *leStarDots[LEITURA_STARS_PER_LEVEL], *leBanner;
+static lv_img_dsc_t leDsc[3];
+static uint16_t *lePix[3];
+static LeituraRound leRound;
+static bool leFirstTry, leBusy;     // leBusy: entre o acerto e a próxima rodada os toques são ignorados
+static lv_timer_t *leTimer = nullptr;  // próxima rodada / fim da festa de nível
+
+static void leFreeImages() {
+  for (int i = 0; i < 3; i++) {
+    lv_img_cache_invalidate_src(&leDsc[i]);
+    free(lePix[i]);
+    lePix[i] = nullptr;
+  }
+}
+
+static void leShowProgress() {
+  lv_label_set_text_fmt(leLevelLabel, "Nível %d", leituraLevel());
+  for (int i = 0; i < LEITURA_STARS_PER_LEVEL; i++)
+    lv_obj_set_style_bg_color(leStarDots[i], lv_color_hex(i < leituraStars() ? 0xFFC107 : 0xE8BFD0), 0);
+}
+
+static void leNewRound() {
+  leFreeImages();
+  leituraNewRound(leRound);
+  lv_label_set_text(leWordLabel, leituraWord(leRound.target));
+  for (int i = 0; i < 3; i++) {
+    lv_obj_set_style_opa(leCards[i], LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(leCards[i], 0, 0);
+    lv_obj_add_flag(leCards[i], LV_OBJ_FLAG_CLICKABLE);
+    lePix[i] = leituraImage(leRound.options[i]);
+    if (!lePix[i]) {
+      lv_obj_add_flag(leImgs[i], LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    leDsc[i].header.always_zero = 0;
+    leDsc[i].header.cf = LV_IMG_CF_TRUE_COLOR;
+    leDsc[i].header.w = LEITURA_IMG;
+    leDsc[i].header.h = LEITURA_IMG;
+    leDsc[i].data_size = LEITURA_IMG * LEITURA_IMG * 2;
+    leDsc[i].data = (const uint8_t *)lePix[i];
+    lv_img_set_src(leImgs[i], &leDsc[i]);
+    lv_obj_clear_flag(leImgs[i], LV_OBJ_FLAG_HIDDEN);
+  }
+  leFirstTry = true;
+  leBusy = false;
+  leShowProgress();
+}
+
+static void leTimerDone(lv_timer_t *) {
+  leTimer = nullptr;  // repeat_count 1: o LVGL apaga o timer depois desta chamada
+  lv_obj_add_flag(leBanner, LV_OBJ_FLAG_HIDDEN);
+  leNewRound();
+}
+static void leAfter(uint32_t ms) {
+  leTimer = lv_timer_create(leTimerDone, ms, nullptr);
+  lv_timer_set_repeat_count(leTimer, 1);
+}
+
+static void leCardEvent(lv_event_t *e) {
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  if (leBusy) return;
+  if (leRound.options[i] != leRound.target) {  // errou: a imagem fica apagada e ela tenta de novo
+    soundPlay(Snd::Wrong);
+    leFirstTry = false;
+    lv_obj_set_style_opa(leCards[i], LV_OPA_30, 0);
+    lv_obj_clear_flag(leCards[i], LV_OBJ_FLAG_CLICKABLE);
+    return;
+  }
+  leBusy = true;
+  lv_obj_set_style_border_width(leCards[i], 8, 0);
+  bool levelUp = leFirstTry && leituraScore();  // estrela só no acerto de primeira
+  if (leFirstTry && !levelUp) lv_obj_set_style_bg_color(leStarDots[leituraStars() - 1], lv_color_hex(0xFFC107), 0);
+  if (levelUp) {
+    soundPlay(Snd::LevelUp);
+    leShowProgress();
+    for (lv_obj_t *dot : leStarDots) lv_obj_set_style_bg_color(dot, lv_color_hex(0xFFC107), 0);  // 10 de 10 na festa
+    lv_label_set_text_fmt(leBanner, LV_SYMBOL_OK " Nível %d!", leituraLevel());
+    lv_obj_clear_flag(leBanner, LV_OBJ_FLAG_HIDDEN);
+    leAfter(2500);
+  } else {
+    soundPlay(Snd::Correct);
+    leAfter(1200);
+  }
+}
+
+// Toque longo no "Nível N" (para o adulto): passa para o próximo nível (depois do último volta ao 1)
+static void leLevelEvent(lv_event_t *) {
+  if (leBusy) return;
+  leituraNextLevel();
+  leNewRound();
+}
+
+static void leScreenDeleted(lv_event_t *) {
+  if (leTimer) lv_timer_del(leTimer);
+  leTimer = nullptr;
+  leFreeImages();
+}
+static void readingLeave() {
+  soundEnable(false);
+  soundIgnoreMute(false);
+}
+
+void uiShowReading() {
+  lv_obj_t *scr = createScreen();
+  setKidBackground(scr);
+  lv_obj_add_event_cb(scr, leScreenDeleted, LV_EVENT_DELETE, nullptr);
+
+  lv_obj_t *home = createButton(scr, LV_SYMBOL_HOME, lv_palette_main(LV_PALETTE_BLUE), 76, 52, homeEvent);
+  lv_obj_align(home, LV_ALIGN_TOP_LEFT, 6, 6);
+
+  for (int i = 0; i < LEITURA_STARS_PER_LEVEL; i++) {  // uma bolinha por estrela do nível
+    lv_obj_t *dot = lv_obj_create(scr);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, 18, 18);
+    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_set_pos(dot, 104 + i * 24, 23);
+    leStarDots[i] = dot;
+  }
+  leLevelLabel = createLabel(scr, &font_pt_20, 0, LV_LABEL_LONG_CLIP);
+  lv_obj_align(leLevelLabel, LV_ALIGN_TOP_RIGHT, -12, 20);
+  lv_obj_add_flag(leLevelLabel, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_ext_click_area(leLevelLabel, 12);
+  lv_obj_add_event_cb(leLevelLabel, leLevelEvent, LV_EVENT_LONG_PRESSED, nullptr);
+
+  leWordLabel = createLabel(scr, &font_le_64, 0, LV_LABEL_LONG_CLIP);
+  lv_obj_align(leWordLabel, LV_ALIGN_TOP_MID, 0, 70);
+  lv_obj_set_style_text_letter_space(leWordLabel, 6, 0);  // letras um pouco separadas ajudam quem está começando
+
+  for (int i = 0; i < 3; i++) {
+    lv_obj_t *card = lv_obj_create(scr);
+    lv_obj_remove_style_all(card);
+    lv_obj_set_size(card, LE_CARD, LE_CARD);
+    lv_obj_set_pos(card, 12 + i * (LE_CARD + 12), LE_CARD_Y);
+    lv_obj_set_style_bg_color(card, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(card, 16, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(0x2ECC71), 0);  // moldura verde no acerto
+    lv_obj_add_event_cb(card, leCardEvent, LV_EVENT_CLICKED, (void *)(intptr_t)i);
+    leImgs[i] = lv_img_create(card);
+    lv_obj_center(leImgs[i]);
+    leCards[i] = card;
+    lePix[i] = nullptr;
+  }
+
+  leBanner = createLabel(scr, &font_pt_28, 0, LV_LABEL_LONG_CLIP);
+  lv_obj_set_style_bg_color(leBanner, lv_color_hex(0x8E24AA), 0);
+  lv_obj_set_style_bg_opa(leBanner, LV_OPA_COVER, 0);
+  lv_obj_set_style_text_color(leBanner, lv_color_white(), 0);
+  lv_obj_set_style_radius(leBanner, 16, 0);
+  lv_obj_set_style_pad_all(leBanner, 20, 0);
+  lv_obj_align(leBanner, LV_ALIGN_CENTER, 0, 0);
+  lv_obj_add_flag(leBanner, LV_OBJ_FLAG_HIDDEN);
+
+  leTimer = nullptr;
+  soundIgnoreMute(true);
+  soundEnable(true);
+  leituraBegin();
+  leNewRound();
+  loadScreen(scr, "ler");
+  onLeave = readingLeave;
 }
