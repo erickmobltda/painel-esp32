@@ -345,6 +345,63 @@ static volatile bool ignoreMute = false;
 static int volume = 80;
 static es8311_handle_t codec = nullptr;
 
+// Voz: decodifica IMA ADPCM e passa de 16 para 48 kHz com interpolação linear
+struct Speech {
+  const uint8_t *data;
+  uint32_t samples;
+};
+static QueueHandle_t speechQueue;
+static Speech speech = {nullptr, 0};
+static uint32_t speechPos;
+static int speechPred, speechIdx, speechSub;
+static float speechPrev, speechCur;
+static const int16_t ADPCM_STEP[89] = {
+    7,     8,     9,     10,    11,    12,    13,    14,    16,    17,    19,    21,    23,    25,    28,    31,
+    34,    37,    41,    45,    50,    55,    60,    66,    73,    80,    88,    97,    107,   118,   130,   143,
+    157,   173,   190,   209,   230,   253,   279,   307,   337,   371,   408,   449,   494,   544,   598,   658,
+    724,   796,   876,   963,   1060,  1166,  1282,  1411,  1552,  1707,  1878,  2066,  2272,  2499,  2749,  3024,
+    3327,  3660,  4026,  4428,  4871,  5358,  5894,  6484,  7132,  7845,  8630,  9493,  10442, 11487, 12635, 13899,
+    15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767};
+static const int8_t ADPCM_INDEX[8] = {-1, -1, -1, -1, 2, 4, 6, 8};
+static const int SPEECH_UP = SR / SOUND_SPEECH_RATE;
+static_assert(SR % SOUND_SPEECH_RATE == 0, "a voz é ampliada por um fator inteiro");
+
+static float speechNextSource() {
+  if (speechPos >= speech.samples) return 0;
+  uint8_t code = (speech.data[speechPos >> 1] >> (speechPos & 1 ? 4 : 0)) & 15;
+  speechPos++;
+  int step = ADPCM_STEP[speechIdx], delta = step >> 3;
+  if (code & 4) delta += step;
+  if (code & 2) delta += step >> 1;
+  if (code & 1) delta += step >> 2;
+  speechPred = constrain(code & 8 ? speechPred - delta : speechPred + delta, -32768, 32767);
+  speechIdx = constrain(speechIdx + ADPCM_INDEX[code & 7], 0, 88);
+  return speechPred / 32768.0f;
+}
+
+static void mixSpeech(float *mix) {
+  Speech next;
+  if (xQueueReceive(speechQueue, &next, 0) == pdTRUE) {
+    speech = next;
+    speechPos = speechPred = speechIdx = speechSub = 0;
+    speechPrev = 0;
+    speechCur = speechNextSource();
+  }
+  if (!speech.data) return;
+  for (int k = 0; k < BLOCK; k++) {
+    if (++speechSub == SPEECH_UP) {
+      speechSub = 0;
+      if (speechPos >= speech.samples) {
+        speech.data = nullptr;
+        return;
+      }
+      speechPrev = speechCur;
+      speechCur = speechNextSource();
+    }
+    mix[k] += speechPrev + (speechCur - speechPrev) * speechSub / SPEECH_UP;
+  }
+}
+
 static void renderBlock(int16_t *out) {
   static float mix[BLOCK];
   memset(mix, 0, sizeof(mix));
@@ -381,6 +438,7 @@ static void renderBlock(int16_t *out) {
       mix[s - now] += x * g;
     }
   }
+  mixSpeech(mix);
   float master = muted && !ignoreMute ? 0 : 1;
   for (int k = 0; k < BLOCK; k++) {
     float y = mix[k] * master;
@@ -425,6 +483,7 @@ void soundBegin() {
   es8311_voice_volume_set(codec, volume, nullptr);
   es8311_microphone_config(codec, false);
   queue = xQueueCreate(16, sizeof(Snd));
+  speechQueue = xQueueCreate(1, sizeof(Speech));
   stopped = xSemaphoreCreateBinary();
   Serial.printf("[som] codec ok, volume %d%s\n", volume, muted ? " (mudo no jogo)" : "");
 }
@@ -439,6 +498,7 @@ void soundEnable(bool on) {
       return;
     }
     xQueueReset(queue);
+    xQueueReset(speechQueue);
     stopRequested = false;
     xTaskCreatePinnedToCore(soundTask, "som", 4096, nullptr, 3, &task, 0);
     displaySetAmplifier(true);
@@ -450,12 +510,18 @@ void soundEnable(bool on) {
     i2s.end();
     for (Voice &v : voices) v.on = false;
     musicOn = false;
+    speech.data = nullptr;
     curBus.alive = oldBus.alive = false;
   }
 }
 
 void soundPlay(Snd s) {
   if (task) xQueueSend(queue, &s, 0);  // fila cheia: o som é descartado, o jogo segue
+}
+
+void soundSpeak(const uint8_t *adpcm, uint32_t samples) {
+  Speech s = {adpcm, samples};
+  if (task) xQueueOverwrite(speechQueue, &s);
 }
 
 void soundSetVolume(int v) {

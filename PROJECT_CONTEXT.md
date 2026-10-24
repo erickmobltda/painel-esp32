@@ -59,7 +59,11 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   não gravado nem testado na placa.
 - **Specs (2026-10-24)**: `docs/specs/` com o núcleo, cada app e a proposta *Monte a Palavra* (não implementada,
   decisões D1–D9 pendentes; trazida de `erickmobltda/my_readmes`).
-- **v1.4 publicada (2026-10-24)** a pedido do usuário, com Ler e Wi-Fi ainda sem teste na placa.
+- **v1.4 publicada (2026-10-24)** a pedido do usuário, com Ler e Wi-Fi ainda sem teste na placa. Gravada na placa: conectou na rede salva.
+- **App Montar / Monte a Palavra (2026-10-24)**: implementado conforme a spec + decisões/adaptações (ver o topo de
+  `docs/specs/apps/monte-a-palavra.md` e `tasks/monte-a-palavra.md`). Núcleo testado no Mac; abre na placa (heap 111 KB).
+  Teste com a filha pendente. Firmware em 94% (158 KB livres): imagens repetidas entre Ler e Montar são candidatas a
+  economia. **v1.5 publicada** a pedido do usuário antes desse teste.
 
 ## Estrutura do sketch `sketches/painel`
 | Arquivo | Papel |
@@ -73,6 +77,7 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 | `net.*` | Wi-Fi (com nova tentativa a cada 15 s) + WebServer porta 80 + DNSServer (portal cativo) + mDNS `painel.local`; tudo do core |
 | `clock.*` | NTP (`pool.ntp.org`), fuso Brasília `<-03>3`; data de hoje e validade do token (autorização + 6 meses) |
 | `spotify.*` | tarefa FreeRTOS que consulta `GET /v1/me/player` a cada 1 s só com a tela aberta; renova access token; troca code→refresh token |
+| `monte.*`, `monte_assets.h` | Montar: núcleo C++ puro (testes em `tests/monte_test.cpp`), palavras+imagens+voz geradas por `tools/monte_assets.py` |
 | `leitura.*`, `leitura_assets.h`, `font_le_64.c` | app Ler: regras/NVS, palavras+imagens geradas por `tools/leitura_assets.py`, fonte 64 px |
 | `fonts.h`, `font_pt_{16,20,28}.c` | Montserrat com acentos (Latin-1) + símbolos LVGL, gerada com `npx lv_font_conv@1.5.2` (comando no cabeçalho de cada .c) |
 

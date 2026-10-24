@@ -67,7 +67,9 @@ void leituraNextLevel() {
 
 const char *leituraWord(int word) { return LE_WORDS[word].text; }
 
-uint16_t *leituraImage(int word) {
+uint16_t *leituraImage(int word) { return leituraInflate(LE_WORDS[word].img, LE_WORDS[word].imgLen); }
+
+uint16_t *leituraInflate(const uint8_t *zlib, uint32_t len) {
   size_t size = LE_IMG_SIZE * LE_IMG_SIZE * 2;
   uint16_t *px = (uint16_t *)heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
   if (!px) return nullptr;
@@ -78,12 +80,12 @@ uint16_t *leituraImage(int word) {
     return nullptr;
   }
   tinfl_init(inflator);
-  size_t inLen = LE_WORDS[word].imgLen, outLen = size;
-  tinfl_status status = tinfl_decompress(inflator, LE_WORDS[word].img, &inLen, (uint8_t *)px, (uint8_t *)px, &outLen,
+  size_t inLen = len, outLen = size;
+  tinfl_status status = tinfl_decompress(inflator, zlib, &inLen, (uint8_t *)px, (uint8_t *)px, &outLen,
                                          TINFL_FLAG_PARSE_ZLIB_HEADER | TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF);
   free(inflator);
   if (status != TINFL_STATUS_DONE || outLen != size) {
-    Serial.printf("[ler] imagem de %s corrompida (status %d)\n", LE_WORDS[word].text, (int)status);
+    Serial.printf("[ler] imagem corrompida (status %d)\n", (int)status);
     free(px);
     return nullptr;
   }

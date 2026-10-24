@@ -31,5 +31,11 @@ bool soundMuted();
 // O mudo acima é do jogo: o app Ler desliga essa regra enquanto está aberto (os sons dele são a resposta do acerto).
 void soundIgnoreMute(bool ignore);
 
+// Voz gravada (app Monte a Palavra): IMA ADPCM mono a SOUND_SPEECH_RATE, preditor e índice iniciais 0, 1º nibble no
+// bit baixo (gerada por tools/monte_assets.py). Os dados precisam continuar válidos enquanto tocam (ficam na flash).
+// Uma voz nova substitui a que estiver tocando.
+static const int SOUND_SPEECH_RATE = 16000;
+void soundSpeak(const uint8_t *adpcm, uint32_t samples);
+
 // Liga o som (I2S, mixer e amplificador) só no jogo e na tela ⚙: economiza ~12 KB de RAM interna e bateria.
 void soundEnable(bool on);

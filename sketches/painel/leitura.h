@@ -24,3 +24,5 @@ void leituraNextLevel();
 const char *leituraWord(int word);
 // RGB565 LEITURA_IMG x LEITURA_IMG na PSRAM (liberar com free). nullptr se faltar memória.
 uint16_t *leituraImage(int word);
+// O mesmo para qualquer imagem LEITURA_IMG x LEITURA_IMG RGB565 comprimida com zlib (usado também pelo Monte a Palavra).
+uint16_t *leituraInflate(const uint8_t *zlib, uint32_t len);

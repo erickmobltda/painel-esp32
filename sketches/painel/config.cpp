@@ -44,6 +44,7 @@ void configLoad(Config &cfg) {
   cfg.spRefreshToken = prefs.getString("sp_refresh", SECRET_SPOTIFY_REFRESH_TOKEN);
   cfg.spAuthDate = prefs.getString("sp_date", SECRET_SPOTIFY_AUTH_DATE);
   cfg.kidPlaylist = prefs.getString("kid_playlist", "5BLKGFcPOFthBIkYROwHLK");  // playlist escolhida pelo usuário
+  cfg.childName = prefs.getString("nome_crianca", "");
   prefs.end();
 }
 
@@ -83,6 +84,13 @@ void configSaveKidPlaylist(const String &playlistId) {
   Preferences prefs;
   prefs.begin(NVS_NAMESPACE, false);
   prefs.putString("kid_playlist", playlistId);
+  prefs.end();
+}
+
+void configSaveChildName(const String &name) {
+  Preferences prefs;
+  prefs.begin(NVS_NAMESPACE, false);
+  prefs.putString("nome_crianca", name);
   prefs.end();
 }
 

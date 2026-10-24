@@ -121,7 +121,12 @@ static String spotifyPage() {
          "PIN:<input name=pin inputmode=numeric required autocomplete=off>"
          "Link da playlist (Compartilhar → Copiar link):<input name=link required autocomplete=off>"
          "<button>Salvar playlist</button></form>"
-         "<p>A playlist precisa ser da conta autorizada acima (regra do Spotify para apps pessoais).</p>";
+         "<p>A playlist precisa ser da conta autorizada acima (regra do Spotify para apps pessoais).</p>"
+         "<h2>Nome no Monte a Palavra</h2><p>Atual: <code>" + htmlEscape(cfg.childName) + "</code></p>"
+         "<form method=post action=/nome>"
+         "PIN:<input name=pin inputmode=numeric required autocomplete=off>"
+         "Nome (aparece em \"Muito bem, nome!\" no fim; vazio = sem nome):<input name=nome maxlength=20 autocomplete=off>"
+         "<button>Salvar nome</button></form>";
 }
 
 
@@ -244,6 +249,16 @@ static void handlePlaylistSave() {
   sendPage(200, "<p>Playlist salva! Abra o app Músicas na placa.</p><p><a href=/>Voltar</a></p>");
 }
 
+static void handleChildNameSave() {
+  if (!checkPin()) return;
+  String name = server.arg("nome");
+  name.trim();
+  if (name.length() > 20) name = name.substring(0, 20);
+  configSaveChildName(name);
+  configLoad(cfg);
+  sendPage(200, "<p>Nome salvo!</p><p><a href=/>Voltar</a></p>");
+}
+
 // ---------- Rotas (as mesmas nos dois modos; cada handler confere o modo) ----------
 
 static void handleRoot() {
@@ -275,6 +290,10 @@ static void startServer() {
     });
     server.on("/playlist", HTTP_POST, [] {
       if (!setupMode) handlePlaylistSave();
+      else server.send(403, "text/plain", "Configure o Wi-Fi primeiro");
+    });
+    server.on("/nome", HTTP_POST, [] {
+      if (!setupMode) handleChildNameSave();
       else server.send(403, "text/plain", "Configure o Wi-Fi primeiro");
     });
     server.on("/spotify/code", HTTP_POST, [] {

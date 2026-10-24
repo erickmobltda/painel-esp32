@@ -16,6 +16,7 @@ struct Config {
   String spRefreshToken;
   String spAuthDate;  // AAAA-MM-DD da autorização no Spotify
   String kidPlaylist; // id da playlist do app Músicas
+  String childName;   // nome escrito no fim da sessão do Monte a Palavra (vazio = sem nome)
 };
 
 void configLoad(Config &cfg);
@@ -26,3 +27,4 @@ void configSaveSpotify(const String &clientId, const String &clientSecret, const
 // O Spotify pode devolver um refresh token novo ao renovar o acesso; a data da autorização não muda.
 void configSaveRefreshToken(const String &refreshToken);
 void configSaveKidPlaylist(const String &playlistId);
+void configSaveChildName(const String &name);

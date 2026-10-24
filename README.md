@@ -1,7 +1,7 @@
 # Painel
 
 Firmware para a placa **Waveshare ESP32-Touch-LCD-3.5** (ESP32, tela de 3,5" sensível ao toque, alto-falante, bateria).
-A tela inicial tem quatro apps, pensados para uma criança pequena:
+A tela inicial tem cinco apps, pensados para uma criança pequena:
 
 | App | O que faz |
 |---|---|
@@ -9,6 +9,7 @@ A tela inicial tem quatro apps, pensados para uma criança pequena:
 | **Jogo** | *Capitã Maeva*: corrida infinita com os botões **Pular** e **Abaixar**, música e efeitos pelo alto-falante. |
 | **Pintar** | Tela branca com 8 cores, glitter, borracha, 3 espessuras e "apagar tudo". O desenho fica salvo. |
 | **Ler** | Aparece uma palavra e 3 imagens; a criança lê e toca na imagem certa. 3 níveis, estrelas e sons de acerto e erro. |
+| **Montar** | *Monte a Palavra*: aparece uma imagem e a criança monta o nome dela com sílabas. Tocar na imagem fala a palavra. |
 
 No topo da tela inicial: Wi-Fi, ⚙ Configurações e bateria.
 
@@ -91,6 +92,18 @@ O mudo do jogo não vale para o Ler (lá o som faz parte da brincadeira).
 - **Para o adulto:** segure o dedo em **"Nível N"** (canto de cima à direita) para pular para o próximo nível; depois
   do último volta ao 1. O nível e as estrelas ficam salvos.
 - Funciona sem internet. São 95 palavras; para mudar a lista, veja [docs/specs/apps/ler.md](docs/specs/apps/ler.md).
+
+### App Montar (Monte a Palavra)
+- Aparece uma imagem; tocar nela (ou no 🔊) fala a palavra. A criança toca nas sílabas para montar a palavra nos
+  espaços tracejados; tocar numa sílaba já colocada a devolve.
+- **Acertou:** as sílabas acendem em ordem, a palavra é falada e vem um elogio. **Errou:** só as sílabas erradas voltam,
+  sem som de erro. A partir do 2º erro na mesma palavra vêm dicas: falar a palavra, piscar a sílaba certa e, no 4º,
+  o jogo monta junto ("Vou te ajudar").
+- Sessões de 5 palavras. O nível sobe sozinho com 4 acertos sem ajuda nas últimas 5 palavras (4 níveis, 54 palavras).
+- **Para o adulto:** segure o **⏸** por 3 s para abrir o menu: nível, volume, sílabas que ela já conhece (só aparecem
+  palavras com sílabas liberadas), progresso por palavra e zerar o progresso. O nome que aparece no fim da sessão é
+  cadastrado na página da placa ("Nome no Monte a Palavra").
+- Funciona sem internet. Regras completas: [docs/specs/apps/monte-a-palavra.md](docs/specs/apps/monte-a-palavra.md).
 
 ---
 
@@ -196,8 +209,9 @@ O arquivo vem do repositório oficial (pasta `Firmware`). As configurações do 
 ---
 
 ## Sons
-Os sons do jogo e do Ler **não usam arquivos nem cartão SD**: o sintetizador do jogo original (Web Audio) foi portado
-para a placa e gera música e efeitos ao vivo. O cartão SD não é usado pelo firmware.
+Os sons do jogo, do Ler e do Montar **não usam arquivos nem cartão SD**: o sintetizador do jogo original (Web Audio) foi portado
+para a placa e gera música e efeitos ao vivo. A voz do Montar foi gerada no Mac (`say`, voz Luciana) e fica
+comprimida dentro do firmware. O cartão SD não é usado pelo firmware.
 
 ---
 
@@ -216,7 +230,7 @@ para a placa e gera música e efeitos ao vivo. O cartão SD não é usado pelo f
 "$CLI" --config-file arduino-cli.yaml monitor -p $PORT -c baudrate=115200
 ```
 Envie uma letra: **`i`** mostra a caixa-preta (ligou, escureceu, apagou, desligou, USB/bateria, com horário e
-memória livre) e **`I`** apaga. Outras: `m` abre o Músicas, `g` o jogo, `p` o Pintar, `l` o Ler, `b` simula bateria (para testar
+memória livre) e **`I`** apaga. Outras: `m` abre o Músicas, `g` o jogo, `p` o Pintar, `l` o Ler, `a` o Montar, `b` simula bateria (para testar
 a economia de energia com o USB ligado). Se a placa travar, o ESP32 guarda um *coredump* na flash —
 o passo a passo para lê-lo está em [LESSONS.md](LESSONS.md).
 
@@ -230,4 +244,6 @@ o passo a passo para lê-lo está em [LESSONS.md](LESSONS.md).
 - `sketches/painel/`: o firmware (um arquivo por módulo: tela, energia, rede, Spotify, jogo, som, pintura...).
 - `tools/spotify_auth.py`: autorização do Spotify pelo Mac. `tools/game_assets.py`: gera os sprites do jogo a partir
   do `index.html` original. `tools/leitura_assets.py`: gera as imagens e a lista de palavras do Ler.
-- Imagens do Ler: [Noto Emoji](https://github.com/googlefonts/noto-emoji) do Google (licenças em [`licenses/`](licenses/README.md)).
+  `tools/monte_assets.py`: imagens e voz do Montar. Testes das regras do Montar, no Mac:
+  `clang++ -std=c++17 -I arduino/libraries/ArduinoJson/src tests/monte_test.cpp sketches/painel/monte.cpp -o build/monte_test && build/monte_test`
+- Imagens do Ler e do Montar: [Noto Emoji](https://github.com/googlefonts/noto-emoji) do Google (licenças em [`licenses/`](licenses/README.md)).

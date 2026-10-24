@@ -8,6 +8,10 @@
 #include "paint.h"
 #include "config.h"
 #include "leitura.h"
+#include "monte.h"
+#include "monte_assets.h"
+
+#include <algorithm>
 
 #include <LittleFS.h>
 #include "sound.h"
@@ -82,6 +86,7 @@ static lv_obj_t *createButton(lv_obj_t *parent, const char *text, lv_color_t col
   lv_obj_t *label = lv_label_create(btn);
   lv_obj_set_style_text_font(label, &font_pt_28, 0);
   lv_label_set_text(label, text);
+  lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_center(label);
   return btn;
 }
@@ -141,6 +146,7 @@ static void settingsEvent(lv_event_t *);
 static void spotifyEvent(lv_event_t *);
 static void musicEvent(lv_event_t *);
 static void readingEvent(lv_event_t *) { uiShowReading(); }
+static void monteEvent(lv_event_t *) { uiShowMonte(); }
 
 static void paintEvent(lv_event_t *) {
   logMemory("pintar");
@@ -176,16 +182,18 @@ void uiShowHome() {
   lv_label_set_text(batteryLabel, "");
   lv_obj_align(batteryLabel, LV_ALIGN_TOP_RIGHT, -10, 12);
 
-  // 4 apps em grade 2x2. A tela "Spotify" (controle remoto) está escondida por enquanto:
+  // 5 apps: 3 em cima, 2 embaixo. A tela "Spotify" (controle remoto) está escondida por enquanto:
   // o código continua em spotifyEvent(), sem botão.
-  lv_obj_t *musicBtn = createButton(scr, LV_SYMBOL_AUDIO "  Músicas", lv_color_hex(0x1DB954), 222, 122, musicEvent);
+  lv_obj_t *musicBtn = createButton(scr, LV_SYMBOL_AUDIO "\nMúsicas", lv_color_hex(0x1DB954), 144, 122, musicEvent);
   lv_obj_set_pos(musicBtn, 12, 56);
-  lv_obj_t *gameBtn = createButton(scr, LV_SYMBOL_PLAY "  Jogo", lv_color_hex(0xE67E22), 222, 122, gameEvent);
-  lv_obj_set_pos(gameBtn, 246, 56);
-  lv_obj_t *paintBtn = createButton(scr, LV_SYMBOL_EDIT "  Pintar", lv_color_hex(0x8E24AA), 222, 122, paintEvent);
-  lv_obj_set_pos(paintBtn, 12, 188);
+  lv_obj_t *gameBtn = createButton(scr, LV_SYMBOL_PLAY "\nJogo", lv_color_hex(0xE67E22), 144, 122, gameEvent);
+  lv_obj_set_pos(gameBtn, 168, 56);
+  lv_obj_t *paintBtn = createButton(scr, LV_SYMBOL_EDIT "\nPintar", lv_color_hex(0x8E24AA), 144, 122, paintEvent);
+  lv_obj_set_pos(paintBtn, 324, 56);
   lv_obj_t *readBtn = createButton(scr, LV_SYMBOL_EYE_OPEN "  Ler", lv_color_hex(0x1E88E5), 222, 122, readingEvent);
-  lv_obj_set_pos(readBtn, 246, 188);
+  lv_obj_set_pos(readBtn, 12, 188);
+  lv_obj_t *monteBtn = createButton(scr, LV_SYMBOL_SHUFFLE "  Montar", lv_color_hex(0x00897B), 222, 122, monteEvent);
+  lv_obj_set_pos(monteBtn, 246, 188);
 
   loadScreen(scr, "home", refreshHome);
 }
@@ -1034,4 +1042,544 @@ void uiShowReading() {
   leNewRound();
   loadScreen(scr, "ler");
   onLeave = readingLeave;
+}
+
+// ---------- App Monte a Palavra (imagem + sílabas) ----------
+// Regras em monte.* (testadas no Mac, tests/monte_test.cpp); aqui só a tela, o som e o arquivo de progresso.
+
+static_assert(MONTE_VOICE_RATE == SOUND_SPEECH_RATE, "rode tools/monte_assets.py de novo");
+static const char *MO_FILE = "/monte.json", *MO_TMP = "/monte.tmp";
+static const int MO_W = 84, MO_H = 64, MO_GAP = 20, MO_AREA_X = 178, MO_AREA_W = 292, MO_SLOT_Y = 72,
+                 MO_BANK_Y = 164;
+static const uint32_t MO_PIECE = 0xFFB74D, MO_GREEN = 0x2ECC71;  // todas as peças da mesma cor (§3)
+static std::vector<monte::Word> moWords;
+static monte::Progress moProgress;
+static monte::Round moRound;
+static const MonteWordData *moData;
+static lv_obj_t *moImg, *moBank[monte::MAX_PIECES], *moSlot[monte::MAX_SLOTS], *moBox[monte::MAX_SLOTS],
+    *moStars[monte::SESSION_WORDS], *moBanner, *moEnd, *moMenu;
+static lv_img_dsc_t moDsc;
+static uint16_t *moPix;
+static int moDone, moStep;      // palavras montadas na sessão; passo da animação em andamento
+static bool moBusy;              // animação de acerto/erro: toques ignorados (§4)
+static lv_timer_t *moTimer;      // próximo passo da animação
+static uint32_t moPauseSince;    // toque longo de 3 s no ⏸
+static lv_point_t moBoxPts[] = {{0, 0}, {MO_W, 0}, {MO_W, MO_H}, {0, MO_H}, {0, 0}};
+
+static unsigned moRng(unsigned n) { return esp_random() % n; }
+
+static void moSave() {  // §9.1: grava num temporário e renomeia (queda de energia não corrompe)
+  std::string json = monte::saveProgress(moProgress);
+  File f = LittleFS.open(MO_TMP, "w");
+  bool ok = f && f.write((const uint8_t *)json.data(), json.size()) == json.size();
+  if (f) f.close();
+  if (!ok || !LittleFS.rename(MO_TMP, MO_FILE)) Serial.println("[monte] falha ao salvar o progresso");
+}
+
+static void moLoad() {
+  if (moWords.empty()) {
+    for (const MonteWordData &d : MONTE_WORDS) {
+      monte::Word w{d.id, d.text, {}, d.minLevel, d.maxLevel};
+      String syl = d.syl;
+      for (int a = 0, b; a <= (int)syl.length(); a = b + 1) {
+        b = syl.indexOf('|', a);
+        if (b < 0) b = syl.length();
+        w.syl.push_back(syl.substring(a, b).c_str());
+      }
+      if (monte::validWord(w)) moWords.push_back(w);
+      else Serial.printf("[monte] palavra rejeitada (sílabas não formam a palavra): %s\n", d.text);  // §6.5
+    }
+  }
+  bool ok = false;
+  File f = LittleFS.open(MO_FILE, "r");
+  if (f) {
+    String s = f.readString();
+    f.close();
+    moProgress = monte::loadProgress(s.c_str(), &ok);
+  }
+  if (!ok) {
+    moProgress = monte::Progress();
+    Serial.println(f ? "[monte] progresso inválido, começando do padrão" : "[monte] sem progresso salvo, começando");
+  }
+}
+
+static const MonteWordData &moDataOf(const monte::Word *w) {
+  for (const MonteWordData &d : MONTE_WORDS)
+    if (w->id == d.id) return d;
+  return MONTE_WORDS[0];
+}
+
+static void moSpeak(lv_event_t * = nullptr) {
+  if (moData) soundSpeak(moData->voice, moData->voiceSamples);
+}
+
+static lv_coord_t moRowX(int count, int col) {  // centraliza 1 a 3 peças na área da direita
+  return MO_AREA_X + (MO_AREA_W - (count * MO_W + (count - 1) * MO_GAP)) / 2 + col * (MO_W + MO_GAP);
+}
+
+static void moSetPiece(lv_obj_t *btn, const char *text, bool ghost) {
+  lv_obj_set_style_bg_opa(btn, ghost ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(btn, ghost ? 2 : 0, 0);
+  lv_obj_set_style_shadow_width(btn, ghost ? 0 : 6, 0);
+  lv_obj_t *label = lv_obj_get_child(btn, 0);
+  lv_label_set_text(label, ghost ? "" : text);
+  if (ghost) lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+  else lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+}
+
+static void moRefresh() {
+  int n = moRound.pieces.size(), slots = moRound.slotCount();
+  for (int i = 0; i < monte::MAX_PIECES; i++) {
+    lv_anim_del(moBank[i], nullptr);  // para a dica que pisca
+    lv_obj_set_style_opa(moBank[i], LV_OPA_COVER, 0);
+    if (i >= n) {
+      lv_obj_add_flag(moBank[i], LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    int row = i / 3, inRow = min(3, n - row * 3);
+    lv_obj_set_pos(moBank[i], moRowX(inRow, i % 3), MO_BANK_Y + row * (MO_H + MO_GAP));
+    lv_obj_clear_flag(moBank[i], LV_OBJ_FLAG_HIDDEN);
+    moSetPiece(moBank[i], moRound.pieces[i].text.c_str(), moRound.pieces[i].slot >= 0);
+  }
+  for (int s = 0; s < monte::MAX_SLOTS; s++) {
+    bool used = s < slots;
+    lv_obj_set_pos(moBox[s], moRowX(slots, s), MO_SLOT_Y);
+    lv_obj_set_pos(moSlot[s], moRowX(slots, s), MO_SLOT_Y);
+    if (used) lv_obj_clear_flag(moBox[s], LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(moBox[s], LV_OBJ_FLAG_HIDDEN);
+    int p = used ? moRound.slots[s] : -1;
+    if (p < 0) {
+      lv_obj_add_flag(moSlot[s], LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    lv_obj_clear_flag(moSlot[s], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_style_bg_color(moSlot[s], lv_color_hex(MO_PIECE), 0);
+    lv_obj_set_style_translate_x(moSlot[s], 0, 0);
+    moSetPiece(moSlot[s], moRound.pieces[p].text.c_str(), false);
+  }
+  for (int i = 0; i < monte::SESSION_WORDS; i++)
+    lv_obj_set_style_bg_color(moStars[i], lv_color_hex(i < moDone ? 0xFFC107 : 0xE8BFD0), 0);
+}
+
+static void moShowBanner(const char *text) {
+  lv_label_set_text(moBanner, text);
+  lv_obj_clear_flag(moBanner, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(moBanner);
+}
+
+static void moTimerCb(lv_timer_t *t);
+static void (*moTimerFn)();
+static void moAfter(uint32_t ms, void (*fn)()) {
+  if (moTimer) lv_timer_del(moTimer);
+  moTimerFn = fn;
+  moTimer = lv_timer_create(moTimerCb, ms, nullptr);
+  lv_timer_set_repeat_count(moTimer, 1);
+}
+static void moTimerCb(lv_timer_t *) {
+  moTimer = nullptr;  // repeat_count 1: o LVGL apaga o timer depois desta chamada
+  moTimerFn();
+}
+
+static void moNewRound();
+
+static void moShowEnd() {  // FIM_SESSAO
+  Config cfg;
+  configLoad(cfg);
+  lv_obj_t *msg = lv_obj_get_child(moEnd, 0);
+  if (cfg.childName.length())
+    lv_label_set_text_fmt(msg, "Muito bem, %s!\nVocê montou todas as\npalavras de hoje!", cfg.childName.c_str());
+  else lv_label_set_text(msg, "Muito bem!\nVocê montou todas as\npalavras de hoje!");
+  lv_obj_clear_flag(moEnd, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(moEnd);
+  soundPlay(Snd::LevelUp);
+}
+
+static void moAfterWord() {
+  if (moDone >= monte::SESSION_WORDS) moShowEnd();
+  else moNewRound();
+}
+
+static void moSuccessStep() {  // ACERTO: cada sílaba acende em ordem, depois a palavra é falada e comemora
+  if (moStep < moRound.slotCount()) {
+    lv_obj_set_style_bg_color(moSlot[moStep++], lv_color_hex(MO_GREEN), 0);
+    moAfter(350, moSuccessStep);
+    return;
+  }
+  if (moStep == moRound.slotCount()) {
+    moStep++;
+    moSpeak();
+    moAfter(moData->voiceSamples * 1000 / MONTE_VOICE_RATE + 150, moSuccessStep);
+    return;
+  }
+  static const char *const PRAISE[] = {"Muito bem!", "Isso aí!", "Você conseguiu!", "Parabéns!"};
+  int change = monte::finishRound(moProgress, moRound, clockToday().c_str());
+  moSave();
+  moDone++;
+  moRefresh();
+  for (int s = 0; s < moRound.slotCount(); s++) lv_obj_set_style_bg_color(moSlot[s], lv_color_hex(MO_GREEN), 0);
+  if (change > 0) {
+    static char text[24];
+    snprintf(text, sizeof(text), LV_SYMBOL_OK " Nível %d!", moProgress.level);
+    moShowBanner(text);
+    soundPlay(Snd::LevelUp);
+  } else {
+    moShowBanner(PRAISE[esp_random() % 4]);
+    soundPlay(Snd::Correct);
+  }
+  Serial.printf("[monte] %s: %d erro(s)%s, nível %d%s\n", moData->text, moRound.errors,
+                moRound.guided ? ", solução guiada" : "", moProgress.level,
+                change > 0 ? " (subiu)" : change < 0 ? " (desceu)" : "");
+  moAfter(2000, moAfterWord);
+}
+
+static void moSuccess() {
+  moBusy = true;
+  moStep = 0;
+  moSuccessStep();
+}
+
+static void moGuidedStep() {  // §5, 4 erros: o jogo coloca as peças certas uma por uma
+  lv_obj_add_flag(moBanner, LV_OBJ_FLAG_HIDDEN);
+  moRound.place(moRound.nextCorrectPiece());
+  moRefresh();
+  if (moRound.check() == monte::Check::Correct) moAfter(400, moSuccess);
+  else moAfter(700, moGuidedStep);
+}
+
+static void moUnlock() {
+  lv_obj_add_flag(moBanner, LV_OBJ_FLAG_HIDDEN);
+  moBusy = false;
+}
+
+static void moBlinkExec(void *obj, int32_t v) { lv_obj_set_style_opa((lv_obj_t *)obj, v, 0); }
+
+static void moAfterShake() {
+  std::vector<int> back;
+  monte::Hint hint = moRound.wrong(back);  // erradas voltam ao banco, certas ficam (D5)
+  moRefresh();
+  moShowBanner(hint == monte::Hint::Guided ? "Vou te ajudar." : "Quase! Vamos tentar de novo.");
+  if (hint == monte::Hint::SpeakWord) moSpeak();
+  if (hint == monte::Hint::Blink) {  // a próxima peça certa pisca devagar
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, moBank[moRound.nextCorrectPiece()]);
+    lv_anim_set_exec_cb(&a, moBlinkExec);
+    lv_anim_set_values(&a, LV_OPA_COVER, LV_OPA_30);
+    lv_anim_set_time(&a, 500);
+    lv_anim_set_playback_time(&a, 500);
+    lv_anim_set_repeat_count(&a, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_start(&a);
+  }
+  moAfter(1200, hint == monte::Hint::Guided ? moGuidedStep : moUnlock);
+}
+
+static void moShakeExec(void *obj, int32_t v) { lv_obj_set_style_translate_x((lv_obj_t *)obj, v, 0); }
+
+static void moWrong() {  // ERRO: as peças erradas balançam de leve (sem som, §1) e depois voltam
+  moBusy = true;
+  for (int s = 0; s < moRound.slotCount(); s++) {
+    if (moRound.pieces[moRound.slots[s]].text == moRound.word->syl[s]) continue;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, moSlot[s]);
+    lv_anim_set_exec_cb(&a, moShakeExec);
+    lv_anim_set_values(&a, -6, 6);
+    lv_anim_set_time(&a, 90);
+    lv_anim_set_playback_time(&a, 90);
+    lv_anim_set_repeat_count(&a, 3);
+    lv_anim_start(&a);
+  }
+  moAfter(800, moAfterShake);
+}
+
+static void moBankEvent(lv_event_t *e) {
+  if (moBusy || moRound.place((int)(intptr_t)lv_event_get_user_data(e)) < 0) return;
+  moRefresh();
+  monte::Check c = moRound.check();
+  if (c == monte::Check::Correct) moSuccess();
+  else if (c == monte::Check::Wrong) moWrong();
+}
+
+static void moSlotEvent(lv_event_t *e) {
+  if (!moBusy && moRound.remove((int)(intptr_t)lv_event_get_user_data(e))) moRefresh();
+}
+
+static void moNewRound() {
+  lv_obj_add_flag(moBanner, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(moEnd, LV_OBJ_FLAG_HIDDEN);
+  lv_img_cache_invalidate_src(&moDsc);
+  free(moPix);
+  moPix = nullptr;
+  const monte::Word *w = monte::nextWord(moProgress, moWords, moRng);
+  if (!w) {  // §9.2: nenhuma palavra com as sílabas liberadas
+    moBusy = true;
+    moData = nullptr;
+    lv_obj_add_flag(moImg, LV_OBJ_FLAG_HIDDEN);
+    for (lv_obj_t *o : moBank) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    for (int s = 0; s < monte::MAX_SLOTS; s++) {
+      lv_obj_add_flag(moBox[s], LV_OBJ_FLAG_HIDDEN);
+      lv_obj_add_flag(moSlot[s], LV_OBJ_FLAG_HIDDEN);
+    }
+    moShowBanner("Libere mais sílabas no menu\n(segure o " LV_SYMBOL_PAUSE " por 3 s)");
+    return;
+  }
+  moRound = monte::makeRound(*w, moProgress.level, moProgress.unlocked, moWords, moRng);
+  moData = &moDataOf(w);
+  moPix = leituraInflate(moData->img, moData->imgLen);
+  if (moPix) {
+    moDsc.header.always_zero = 0;
+    moDsc.header.cf = LV_IMG_CF_TRUE_COLOR;
+    moDsc.header.w = moDsc.header.h = LEITURA_IMG;
+    moDsc.data_size = LEITURA_IMG * LEITURA_IMG * 2;
+    moDsc.data = (const uint8_t *)moPix;
+    lv_img_set_src(moImg, &moDsc);
+    lv_obj_clear_flag(moImg, LV_OBJ_FLAG_HIDDEN);
+  } else {
+    lv_obj_add_flag(moImg, LV_OBJ_FLAG_HIDDEN);  // §8: sem imagem, retângulo neutro
+  }
+  moBusy = false;
+  moRefresh();
+  Serial.printf("[monte] nível %d: %s (%d peças)\n", moProgress.level, moData->text, (int)moRound.pieces.size());
+}
+
+static void moAgainEvent(lv_event_t *) {
+  moDone = 0;
+  moNewRound();
+}
+
+// ----- Menu do responsável (§11) -----
+static lv_obj_t *moLevelLabel;
+
+static void moMenuLevel() { lv_label_set_text_fmt(moLevelLabel, "Nível %d", moProgress.level); }
+
+static void moLevelEvent(lv_event_t *e) {
+  int d = (int)(intptr_t)lv_event_get_user_data(e);
+  moProgress.level = constrain(moProgress.level + d, 1, monte::LEVELS);
+  moProgress.history.clear();
+  moProgress.guidedStreak = 0;
+  moMenuLevel();
+}
+
+static void moSyllableEvent(lv_event_t *e) {
+  lv_obj_t *btn = lv_event_get_target(e);
+  std::string syl = lv_label_get_text(lv_obj_get_child(btn, 0));
+  auto &u = moProgress.unlocked;
+  auto it = std::find(u.begin(), u.end(), syl);
+  bool on = it == u.end();
+  if (on) u.push_back(syl);
+  else u.erase(it);
+  lv_obj_set_style_bg_color(btn, lv_color_hex(on ? 0x1E88E5 : 0x555555), 0);
+}
+
+static void moResetEvent(lv_event_t *e) {  // zerar com confirmação dupla
+  lv_obj_t *label = lv_obj_get_child(lv_event_get_target(e), 0);
+  const char *t = lv_label_get_text(label);
+  if (!strcmp(t, "Zerar progresso")) lv_label_set_text(label, "Tem certeza?");
+  else if (!strcmp(t, "Tem certeza?")) lv_label_set_text(label, "Apagar tudo mesmo?");
+  else {
+    moProgress = monte::Progress();
+    moSave();
+    lv_label_set_text(label, "Progresso zerado");
+    moMenuLevel();
+  }
+}
+
+static void moVolumeEvent(lv_event_t *e) {
+  soundSetVolume(lv_slider_get_value(lv_event_get_target(e)));
+  soundPlay(Snd::Beep);
+}
+
+static void moCloseMenu(lv_event_t *) {
+  moSave();
+  lv_obj_del(moMenu);
+  moMenu = nullptr;
+  moNewRound();  // as sílabas ou o nível podem ter mudado
+}
+
+static lv_obj_t *moMenuButton(lv_obj_t *parent, const char *text, uint32_t color, lv_coord_t w, lv_event_cb_t cb,
+                              void *user = nullptr) {
+  lv_obj_t *b = lv_btn_create(parent);
+  lv_obj_set_size(b, w, 48);
+  lv_obj_set_style_bg_color(b, lv_color_hex(color), 0);
+  lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, user);
+  lv_obj_t *l = lv_label_create(b);
+  lv_label_set_text(l, text);
+  lv_obj_center(l);
+  return b;
+}
+
+static void moOpenMenu() {
+  moMenu = lv_obj_create(lv_scr_act());
+  lv_obj_set_size(moMenu, 480, 320);
+  lv_obj_set_pos(moMenu, 0, 0);
+  lv_obj_set_style_radius(moMenu, 0, 0);
+  lv_obj_set_style_border_width(moMenu, 0, 0);
+  lv_obj_set_style_bg_color(moMenu, lv_color_hex(0x202020), 0);
+  lv_obj_set_style_text_color(moMenu, lv_color_white(), 0);
+  lv_obj_set_flex_flow(moMenu, LV_FLEX_FLOW_ROW_WRAP);
+  lv_obj_set_style_pad_row(moMenu, 10, 0);
+  lv_obj_set_style_pad_column(moMenu, 8, 0);
+
+  moMenuButton(moMenu, LV_SYMBOL_LEFT " Voltar ao jogo", 0x2E7D32, 200, moCloseMenu);
+  moMenuButton(moMenu, "-", 0x404040, 56, moLevelEvent, (void *)(intptr_t)-1);
+  moLevelLabel = lv_label_create(moMenu);
+  lv_obj_set_style_text_font(moLevelLabel, &font_pt_20, 0);
+  moMenuLevel();
+  moMenuButton(moMenu, "+", 0x404040, 56, moLevelEvent, (void *)(intptr_t)1);
+
+  lv_obj_t *vol = lv_label_create(moMenu);
+  lv_label_set_text(vol, "Volume");
+  lv_obj_t *slider = lv_slider_create(moMenu);
+  lv_obj_set_width(slider, 300);
+  lv_slider_set_value(slider, soundVolume(), LV_ANIM_OFF);
+  lv_obj_add_event_cb(slider, moVolumeEvent, LV_EVENT_RELEASED, nullptr);
+
+  lv_obj_t *title = lv_label_create(moMenu);
+  lv_obj_set_width(title, 440);
+  lv_label_set_text(title, "Sílabas que ela já conhece (azul = liberada):");
+  for (const std::string &syl : monte::allSimpleSyllables()) {
+    auto &u = moProgress.unlocked;
+    bool on = std::find(u.begin(), u.end(), syl) != u.end();
+    lv_obj_t *b = moMenuButton(moMenu, syl.c_str(), on ? 0x1E88E5 : 0x555555, 76, moSyllableEvent);
+    if (syl[1] == 'A') lv_obj_add_flag(b, LV_OBJ_FLAG_FLEX_IN_NEW_TRACK);  // uma família por linha
+  }
+
+  String stats = "Progresso (tentativas / sem ajuda / com ajuda):\n";
+  for (const auto &kv : moProgress.words) {
+    char line[64];
+    snprintf(line, sizeof(line), "%s  %d / %d / %d\n", kv.first.c_str(), kv.second.tries, kv.second.noHelp,
+             kv.second.withHelp);
+    stats += line;
+  }
+  if (moProgress.words.empty()) stats += "nenhuma palavra ainda\n";
+  lv_obj_t *list = lv_label_create(moMenu);
+  lv_obj_set_width(list, 440);
+  lv_obj_add_flag(list, LV_OBJ_FLAG_FLEX_IN_NEW_TRACK);
+  lv_label_set_text(list, stats.c_str());
+
+  moMenuButton(moMenu, "Zerar progresso", 0xB71C1C, 260, moResetEvent);
+}
+
+static void moPauseEvent(lv_event_t *e) {  // §3: só abre com toque longo de 3 s
+  lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_PRESSED) moPauseSince = millis();
+  else if (code == LV_EVENT_PRESSING && moPauseSince && millis() - moPauseSince >= 3000) {
+    moPauseSince = 0;
+    if (moTimer) lv_timer_del(moTimer);  // interrompe a animação; a rodada recomeça ao voltar
+    moTimer = nullptr;
+    moOpenMenu();
+  } else if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) moPauseSince = 0;
+}
+
+static void moScreenDeleted(lv_event_t *) {
+  if (moTimer) lv_timer_del(moTimer);
+  moTimer = nullptr;
+  lv_img_cache_invalidate_src(&moDsc);
+  free(moPix);
+  moPix = nullptr;
+}
+
+static void monteLeave() {
+  soundEnable(false);
+  soundIgnoreMute(false);
+}
+
+static lv_obj_t *moPieceButton(lv_obj_t *scr, lv_event_cb_t cb, int user) {
+  lv_obj_t *b = lv_btn_create(scr);
+  lv_obj_set_size(b, MO_W, MO_H);
+  lv_obj_set_style_bg_color(b, lv_color_hex(MO_PIECE), 0);
+  lv_obj_set_style_border_color(b, lv_color_hex(0xC9A3B4), 0);
+  lv_obj_set_style_radius(b, 14, 0);
+  lv_obj_set_style_text_color(b, lv_color_hex(KID_TEXT), 0);
+  lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, (void *)(intptr_t)user);
+  lv_obj_t *l = lv_label_create(b);
+  lv_obj_set_style_text_font(l, &font_pt_28, 0);
+  lv_obj_center(l);
+  return b;
+}
+
+void uiShowMonte() {
+  lv_obj_t *scr = createScreen();
+  setKidBackground(scr);
+  lv_obj_add_event_cb(scr, moScreenDeleted, LV_EVENT_DELETE, nullptr);
+  moTimer = nullptr;
+  moMenu = nullptr;
+  moPix = nullptr;
+  moData = nullptr;
+  moPauseSince = 0;
+
+  lv_obj_t *home = createButton(scr, LV_SYMBOL_HOME, lv_palette_main(LV_PALETTE_BLUE), 76, 52, homeEvent);
+  lv_obj_align(home, LV_ALIGN_TOP_LEFT, 6, 6);
+  for (int i = 0; i < monte::SESSION_WORDS; i++) {  // uma bolinha por palavra da sessão
+    lv_obj_t *dot = lv_obj_create(scr);
+    lv_obj_remove_style_all(dot);
+    lv_obj_set_size(dot, 22, 22);
+    lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_opa(dot, LV_OPA_COVER, 0);
+    lv_obj_set_pos(dot, 180 + i * 30, 21);
+    moStars[i] = dot;
+  }
+  lv_obj_t *pause = createButton(scr, LV_SYMBOL_PAUSE, lv_color_hex(0x9E8A94), 64, 52, moPauseEvent);
+  lv_obj_align(pause, LV_ALIGN_TOP_RIGHT, -6, 6);
+  lv_obj_remove_event_cb(pause, moPauseEvent);
+  lv_obj_add_event_cb(pause, moPauseEvent, LV_EVENT_ALL, nullptr);
+
+  lv_obj_t *card = lv_obj_create(scr);  // imagem: tocar fala a palavra
+  lv_obj_remove_style_all(card);
+  lv_obj_set_size(card, 152, 152);
+  lv_obj_set_pos(card, 12, 72);
+  lv_obj_set_style_bg_color(card, lv_color_white(), 0);
+  lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(card, 16, 0);
+  lv_obj_add_flag(card, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(card, moSpeak, LV_EVENT_CLICKED, nullptr);
+  moImg = lv_img_create(card);
+  lv_obj_center(moImg);
+  lv_obj_t *speak = createButton(scr, LV_SYMBOL_VOLUME_MAX, lv_color_hex(0x1E88E5), 152, 64, moSpeak);
+  lv_obj_set_pos(speak, 12, 240);
+
+  for (int s = 0; s < monte::MAX_SLOTS; s++) {  // espaços: contorno tracejado + a peça colocada por cima
+    moBox[s] = lv_line_create(scr);
+    lv_line_set_points(moBox[s], moBoxPts, 5);
+    lv_obj_set_style_line_width(moBox[s], 3, 0);
+    lv_obj_set_style_line_dash_width(moBox[s], 10, 0);
+    lv_obj_set_style_line_dash_gap(moBox[s], 7, 0);
+    lv_obj_set_style_line_color(moBox[s], lv_color_hex(0x8A6F7A), 0);
+    moSlot[s] = moPieceButton(scr, moSlotEvent, s);
+  }
+  for (int i = 0; i < monte::MAX_PIECES; i++) moBank[i] = moPieceButton(scr, moBankEvent, i);
+
+  moBanner = createLabel(scr, &font_pt_28, 0, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(moBanner, 400);
+  lv_obj_set_style_text_align(moBanner, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_style_bg_color(moBanner, lv_color_hex(0x8E24AA), 0);
+  lv_obj_set_style_bg_opa(moBanner, LV_OPA_COVER, 0);
+  lv_obj_set_style_text_color(moBanner, lv_color_white(), 0);
+  lv_obj_set_style_radius(moBanner, 16, 0);
+  lv_obj_set_style_pad_all(moBanner, 20, 0);
+  lv_obj_align(moBanner, LV_ALIGN_CENTER, 0, 20);
+  lv_obj_add_flag(moBanner, LV_OBJ_FLAG_HIDDEN);
+
+  moEnd = lv_obj_create(scr);  // fim da sessão
+  lv_obj_set_size(moEnd, 420, 260);
+  lv_obj_align(moEnd, LV_ALIGN_CENTER, 0, 10);
+  lv_obj_set_style_bg_color(moEnd, lv_color_white(), 0);
+  lv_obj_set_style_radius(moEnd, 20, 0);
+  lv_obj_clear_flag(moEnd, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_t *endMsg = createLabel(moEnd, &font_pt_28, 0, LV_LABEL_LONG_WRAP);
+  lv_obj_set_width(endMsg, 380);
+  lv_obj_set_style_text_align(endMsg, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_align(endMsg, LV_ALIGN_TOP_MID, 0, 6);
+  lv_obj_t *again = createButton(moEnd, LV_SYMBOL_REFRESH " Mais palavras", lv_color_hex(0x00897B), 300, 64,
+                                 moAgainEvent);
+  lv_obj_align(again, LV_ALIGN_BOTTOM_MID, 0, -4);
+  lv_obj_add_flag(moEnd, LV_OBJ_FLAG_HIDDEN);
+
+  soundIgnoreMute(true);
+  soundEnable(true);
+  moLoad();
+  moDone = 0;
+  moNewRound();
+  loadScreen(scr, "monte");
+  onLeave = monteLeave;
 }

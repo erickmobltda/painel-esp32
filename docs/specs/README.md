@@ -11,7 +11,7 @@ armadilhas em [`LESSONS.md`](../../LESSONS.md).
 | [apps/jogo.md](apps/jogo.md) | *Capitã Maeva*, corrida infinita | implementado |
 | [apps/pintar.md](apps/pintar.md) | Desenho livre com cores, glitter e borracha | implementado |
 | [apps/ler.md](apps/ler.md) | Palavra + 3 imagens: tocar na imagem certa | implementado (v1.4) |
-| [apps/monte-a-palavra.md](apps/monte-a-palavra.md) | Montar a palavra com sílabas | **proposta**, não implementada |
+| [apps/monte-a-palavra.md](apps/monte-a-palavra.md) | Montar a palavra com sílabas | implementado (v1.5), com as adaptações listadas no topo |
 
 ## Regras para um app novo
 - Um botão na tela inicial (`uiShowHome` em `ui.cpp`) e uma função `uiShowX()` que cria a tela e chama `loadScreen`.

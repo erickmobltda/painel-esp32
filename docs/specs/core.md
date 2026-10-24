@@ -20,7 +20,7 @@ Spotify → tela inicial (ou a de cadastro do Wi-Fi, se não houver rede salva) 
 ## Telas (`ui.*`)
 - Paisagem 480×320. LVGL 8.4 com um buffer de 480×40 linhas na RAM interna; o resto da memória do LVGL na PSRAM.
 - `loadScreen()` troca a tela, apaga a anterior e loga RAM/PSRAM livres. `onLeave` roda ao sair da tela.
-- Tela inicial: grade 2×2 (**Músicas · Jogo / Pintar · Ler**), fundo rosa claro (#FADDE8). Barra de cima: Wi-Fi,
+- Tela inicial: 3 botões em cima (**Músicas · Jogo · Pintar**) e 2 embaixo (**Ler · Montar**), fundo rosa claro (#FADDE8). Barra de cima: Wi-Fi,
   ⚙ Configurações, bateria (%, ⚡ carregando, USB).
 - ⚙ Configurações: rede, IP, PIN da página, validade do Spotify, volume (bipe ao soltar) e **Trocar Wi-Fi**.
 - Fontes com acento: Montserrat 16/20/28 (Latin-1) e 64 (só maiúsculas, para o Ler), geradas com
@@ -59,6 +59,7 @@ cada boot; 5 PINs errados bloqueiam por 60 s (HTTP 429).
 | `POST /spotify` | Client ID, Client Secret, refresh token, data da autorização |
 | `POST /spotify/code` | troca o `code` do login do Spotify por um refresh token |
 | `POST /playlist` | playlist do app Músicas (link, URI ou ID) |
+| `POST /nome` | nome escrito no fim da sessão do Montar |
 
 ## Dados salvos
 **NVS** (namespace `painel`; se vazia, usa os valores de `secrets.h`, que fica fora do git):
@@ -70,9 +71,11 @@ cada boot; 5 PINs errados bloqueiam por 60 s (HTTP 429).
 | `kid_playlist` | playlist do Músicas |
 | `volume`, `game_mute`, `game_best` | som e recorde do jogo |
 | `le_level`, `le_stars` | progresso do Ler |
+| `nome_crianca` | nome no fim da sessão do Montar |
 
 **Flash** (`sketches/painel/partitions.csv`): app 3 MB em 0x10000, LittleFS 12,9 MB em 0x310000, coredump em
-0xFF0000. Arquivos na LittleFS: `/capas/<albumId>.565`, `/musicas.txt`, `/desenho.bin`, `/diag.txt`.
+0xFF0000. Arquivos na LittleFS: `/capas/<albumId>.565`, `/musicas.txt`, `/desenho.bin`, `/diag.txt`, `/monte.json` (progresso do Montar,
+gravado em `/monte.tmp` e renomeado).
 Gravar uma release pelos 4 `.bin` não apaga NVS nem LittleFS.
 
 ## Relógio (`clock.*`)
@@ -86,10 +89,12 @@ hora na caixa-preta.
   (`soundIgnoreMute`).
 - Efeitos (`enum class Snd`): `Jump`, `Duck`, `Land`, `Hit`, `Start`, `GameOver`, `TitleMusic`, `StopMusic`, `Beep`
   e, do Ler, `Correct`, `Wrong`, `LevelUp`.
+- Voz: `soundSpeak(adpcm, amostras)` toca IMA ADPCM de 16 kHz (gerado por `tools/monte_assets.py`), misturada no
+  sintetizador; uma voz nova substitui a anterior.
 
 ## Diagnóstico
 - Serial 115200. Comandos de uma letra: `i`/`I` mostra/apaga a caixa-preta, `m` Músicas, `g` jogo, `p` Pintar,
-  `l` Ler, `b` simula bateria, `s` liga/desliga a consulta do Spotify, `q` busca a fila do Spotify.
+  `l` Ler, `a` Montar, `b` simula bateria, `s` liga/desliga a consulta do Spotify, `q` busca a fila do Spotify.
 - **Caixa-preta** `/diag.txt` (até 8 KB): boot e motivo do reinício, mudanças de tela/energia com o motivo, USB/bateria,
   RAM livre em cada evento.
 - **Coredump** em 0xFF0000 quando a placa trava (como ler: [LESSONS.md](../../LESSONS.md)).

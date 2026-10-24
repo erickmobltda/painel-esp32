@@ -1,7 +1,15 @@
 # Especificação: "Monte a Palavra"
 
-> **Status no Painel:** proposta, **não implementada**; as decisões do §15 continuam pendentes. Trazida de
-> `erickmobltda/my_readmes/specs/monte-a-palavra.md` em 2026-10-24, sem alterações no texto.
+> **Status no Painel:** implementado na v1.5 (app **Montar**). Texto original trazido de
+> `erickmobltda/my_readmes/specs/monte-a-palavra.md` em 2026-10-24, sem alterações abaixo deste quadro.
+> Decisões do responsável (§15, 2026-10-24): D1 Painel (C++/LVGL, tela em **paisagem**) · D3 voz **só da palavra**,
+> gerada no Mac (`say -v Luciana`), toca **só ao tocar na imagem** ou em 🔊 · D4 só tocar · D5 peças certas ficam ·
+> D6 todas as sílabas simples liberadas · D7 54 palavras em `tools/monte_palavras.txt` · D8 nome na página da placa ·
+> D9 Noto Emoji 128 px.
+> Adaptações aprovadas: sem frases faladas (viram texto + sons do Ler; a dica de 2 erros fala a palavra de novo); sem
+> som de erro; áudio e imagens dentro do firmware; palavras geradas num header em vez de `palavras.json`; parâmetros
+> do §10 fixos no código; ⌂ para voltar ao Painel. Interpretações e plano: `tasks/monte-a-palavra.md`.
+> Código: `sketches/painel/monte.*` (núcleo), `ui.cpp` (tela), testes em `tests/monte_test.cpp`.
 
 > Jogo de alfabetização para uma criança de **5 anos**, em **português do Brasil**, que **já conhece as letras** e **está aprendendo as sílabas**.
 > Este documento existe para que **qualquer IA ou pessoa** consiga implementar o jogo **sem inventar regras**. Onde houver dúvida, a regra é: **pergunte ao responsável antes de decidir** (ver [§15 Decisões em aberto](#15-decisões-em-aberto-perguntar-antes-de-implementar)).
