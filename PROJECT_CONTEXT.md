@@ -51,6 +51,15 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   com o app aberto), senão a Alexa (Speaker, aparece mesmo parada). Com aparelho ativo, o PUT /play vai para ele.
 - **v1.3 publicada (2026-10-21).** Próxima: **12** desempenho (precisa da placa).
 - **Etapa 12 (nova, última, pedido do usuário)**: investigar e melhorar desempenho do Spotify (ver "Pendências de desempenho").
+- **Etapa 12, itens 1 e 2 concluídos (2026-10-22)**: LVGL e lista da playlist na PSRAM (+27 KB de RAM interna no
+  Músicas), token renovado em segundo plano. Item 3 (jogo ~30 FPS) pendente; item 4 removido pelo usuário.
+- **App Ler (pedido do usuário, 2026-10-22)**: palavra + 3 imagens, 3 níveis, sons de acerto/erro. Spec em
+  `docs/specs/apps/ler.md`. Gravado na placa; conferência visual/sonora do usuário pendente.
+- **Wi-Fi com até 5 redes (pedido do usuário)**: casa e casa da sogra sem recadastrar. Compilado; ainda
+  não gravado nem testado na placa.
+- **Specs (2026-10-24)**: `docs/specs/` com o núcleo, cada app e a proposta *Monte a Palavra* (não implementada,
+  decisões D1–D9 pendentes; trazida de `erickmobltda/my_readmes`).
+- **v1.4 publicada (2026-10-24)** a pedido do usuário, com Ler e Wi-Fi ainda sem teste na placa.
 
 ## Estrutura do sketch `sketches/painel`
 | Arquivo | Papel |
@@ -64,6 +73,7 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 | `net.*` | Wi-Fi (com nova tentativa a cada 15 s) + WebServer porta 80 + DNSServer (portal cativo) + mDNS `painel.local`; tudo do core |
 | `clock.*` | NTP (`pool.ntp.org`), fuso Brasília `<-03>3`; data de hoje e validade do token (autorização + 6 meses) |
 | `spotify.*` | tarefa FreeRTOS que consulta `GET /v1/me/player` a cada 1 s só com a tela aberta; renova access token; troca code→refresh token |
+| `leitura.*`, `leitura_assets.h`, `font_le_64.c` | app Ler: regras/NVS, palavras+imagens geradas por `tools/leitura_assets.py`, fonte 64 px |
 | `fonts.h`, `font_pt_{16,20,28}.c` | Montserrat com acentos (Latin-1) + símbolos LVGL, gerada com `npx lv_font_conv@1.5.2` (comando no cabeçalho de cada .c) |
 
 ## Spotify (decisões e armadilhas)
@@ -110,7 +120,7 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 - Usuário: as animações da tela de título do jogo podem ser reduzidas se precisar de desempenho.
 
 ## App Músicas (decisões do usuário, v1.1) — `ui.cpp` (tela) + `spotify.cpp` (dados)
-- Tela inicial: **Músicas | Jogo | Pintar**. A tela "Spotify" não tem mais botão (código em `spotifyEvent`, mantido).
+- Tela inicial: **Músicas | Jogo / Pintar | Ler** (grade 2x2 desde a v1.4). A tela "Spotify" não tem mais botão (código em `spotifyEvent`, mantido).
 - Grade de 8 capas (4x2, 112 px) da playlist do usuário (`5BLKGFcPOFthBIkYROwHLK`, 37 músicas/28 álbuns em 2026-10-20);
   barra ⌂ ◀ ⏯ ▶. Tocar numa capa = `PUT /me/player/play` com `context_uri` da playlist + `offset.uri` da música
   (toca e segue a playlist). Sem aparelho ativo (404) → `GET /devices` → prefere tipo "Speaker" (Alexa), senão o 1º;
@@ -185,8 +195,11 @@ Medições de 2026-10-20 (Wi-Fi −65 dBm; do Mac a API responde em 0,18 s e a c
   `CONFIG_MBEDTLS_*`, sessão TLS reaproveitada); reduzir buffers TLS; HTTP/1.0 vs keep-alive.
 
 ## Wi-Fi e página de configuração (decisões do usuário)
+- Até 5 redes na NVS (`wifi_ssid`/`wifi_pass` = a mais recente, `wifi_ssid1..4`/`wifi_pass1..4`). Com mais de uma,
+  busca assíncrona (`WiFi.scanNetworks(true)`) e conecta na salva de sinal mais forte; busca falhou → a mais recente.
+  Salvar põe na frente, troca a senha se já existia e esquece a mais antiga acima de 5.
 - Sem Wi-Fi salvo → ponto de acesso `Painel-XXXX` (XXXX = 2 últimos bytes do MAC, aqui `Painel-BCFC`), senha de 8 dígitos
-  sorteada a cada ativação e mostrada na tela; portal cativo em `http://192.168.4.1`. Salvar → reinicia e conecta.
+  sorteada a cada ativação e mostrada na tela; portal cativo em `http://192.168.4.1`. Salvar → reinicia e conecta (as outras redes salvas continuam).
 - Conectado → `http://<ip>/` ou `http://painel.local/`: formulário do Spotify (`POST /spotify` com `pin, client_id,
   client_secret, refresh_token, auth_date` AAAA-MM-DD; resposta `200 OK`). PIN de 6 dígitos novo a cada boot, na tela ⚙.
   5 PINs errados → bloqueio de 60 s (HTTP 429).

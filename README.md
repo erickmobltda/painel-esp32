@@ -1,13 +1,14 @@
 # Painel
 
 Firmware para a placa **Waveshare ESP32-Touch-LCD-3.5** (ESP32, tela de 3,5" sensível ao toque, alto-falante, bateria).
-A tela inicial tem três apps, pensados para uma criança pequena:
+A tela inicial tem quatro apps, pensados para uma criança pequena:
 
 | App | O que faz |
 |---|---|
 | **Músicas** | Mostra as capas de uma playlist do Spotify. Tocar numa capa começa a música no celular ou na Alexa (o som sai lá, não na placa). |
 | **Jogo** | *Capitã Maeva*: corrida infinita com os botões **Pular** e **Abaixar**, música e efeitos pelo alto-falante. |
 | **Pintar** | Tela branca com 8 cores, glitter, borracha, 3 espessuras e "apagar tudo". O desenho fica salvo. |
+| **Ler** | Aparece uma palavra e 3 imagens; a criança lê e toca na imagem certa. 3 níveis, estrelas e sons de acerto e erro. |
 
 No topo da tela inicial: Wi-Fi, ⚙ Configurações e bateria.
 
@@ -78,6 +79,18 @@ Na lateral, da esquerda para a direita (está escrito na etiqueta de trás): **P
 
 ### Volume
 ⚙ Configurações → arraste **Volume** e solte (toca um bipe de teste). No jogo, o alto-falante ao lado da casinha liga/desliga o som.
+O mudo do jogo não vale para o Ler (lá o som faz parte da brincadeira).
+
+### App Ler
+- No alto aparece uma palavra em **MAIÚSCULAS**; embaixo, 3 imagens. A criança lê e toca na imagem da palavra.
+- As imagens erradas são de palavras **parecidas** (BOLA → BOLO, BALA), para ela precisar ler a palavra toda.
+- **Errou:** som curto e suave, a imagem fica apagada e ela tenta de novo, sem perder nada.
+- **Acertou:** moldura verde e som de acerto. Se acertou **de primeira**, ganha uma estrela (as bolinhas no alto).
+- **10 estrelas** = sobe de nível, com fanfarra. Nível 1: palavras de 2 sílabas simples (BOLA, GATO); nível 2:
+  3 sílabas (SAPATO, BANANA); nível 3: sílabas mais difíceis (CHAVE, PALHAÇO, BORBOLETA). Sem tempo e sem vidas.
+- **Para o adulto:** segure o dedo em **"Nível N"** (canto de cima à direita) para pular para o próximo nível; depois
+  do último volta ao 1. O nível e as estrelas ficam salvos.
+- Funciona sem internet. São 95 palavras; para mudar a lista, veja [docs/specs/apps/ler.md](docs/specs/apps/ler.md).
 
 ---
 
@@ -183,8 +196,8 @@ O arquivo vem do repositório oficial (pasta `Firmware`). As configurações do 
 ---
 
 ## Sons
-Os sons do jogo **não usam arquivos nem cartão SD**: o sintetizador do jogo original (Web Audio) foi portado para a
-placa e gera música e efeitos ao vivo. O cartão SD não é usado pelo firmware.
+Os sons do jogo e do Ler **não usam arquivos nem cartão SD**: o sintetizador do jogo original (Web Audio) foi portado
+para a placa e gera música e efeitos ao vivo. O cartão SD não é usado pelo firmware.
 
 ---
 
@@ -203,7 +216,7 @@ placa e gera música e efeitos ao vivo. O cartão SD não é usado pelo firmware
 "$CLI" --config-file arduino-cli.yaml monitor -p $PORT -c baudrate=115200
 ```
 Envie uma letra: **`i`** mostra a caixa-preta (ligou, escureceu, apagou, desligou, USB/bateria, com horário e
-memória livre) e **`I`** apaga. Outras: `m` abre o Músicas, `g` o jogo, `p` o Pintar, `b` simula bateria (para testar
+memória livre) e **`I`** apaga. Outras: `m` abre o Músicas, `g` o jogo, `p` o Pintar, `l` o Ler, `b` simula bateria (para testar
 a economia de energia com o USB ligado). Se a placa travar, o ESP32 guarda um *coredump* na flash —
 o passo a passo para lê-lo está em [LESSONS.md](LESSONS.md).
 
@@ -212,6 +225,9 @@ o passo a passo para lê-lo está em [LESSONS.md](LESSONS.md).
 ## Para quem for mexer no código
 - [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md): estado atual, decisões, versões fixadas, pinos, memória e como retomar.
 - [`LESSONS.md`](LESSONS.md): problemas encontrados e como evitá-los.
+- [`docs/specs/`](docs/specs/README.md): como funciona o núcleo e cada app (e propostas de apps novos, como o
+  *Monte a Palavra*), com as regras para criar um app.
 - `sketches/painel/`: o firmware (um arquivo por módulo: tela, energia, rede, Spotify, jogo, som, pintura...).
 - `tools/spotify_auth.py`: autorização do Spotify pelo Mac. `tools/game_assets.py`: gera os sprites do jogo a partir
-  do `index.html` original.
+  do `index.html` original. `tools/leitura_assets.py`: gera as imagens e a lista de palavras do Ler.
+- Imagens do Ler: [Noto Emoji](https://github.com/googlefonts/noto-emoji) do Google (licenças em [`licenses/`](licenses/README.md)).

@@ -1,4 +1,4 @@
-# App "Ler" — plano (aguardando aprovação)
+# App "Ler" — plano (aprovado)
 
 Decisões do usuário (2026-10-22): palavra em MAIÚSCULA de forma; 3 imagens por rodada; sem voz por enquanto;
 filha já lê sílabas simples, mas sem 100% de facilidade; lista de palavras revisada por ele antes de implementar.
@@ -23,8 +23,8 @@ filha já lê sílabas simples, mas sem 100% de facilidade; lista de palavras re
 - Montserrat 64 px só com A–Z e Á Â Ã Ç É Ê Í Ó Ô Õ Ú, gerada com `npx lv_font_conv@1.5.2` (o mesmo usado nas outras fontes).
 
 ## Etapas
-- [ ] 1. Usuário revisa a lista de palavras (níveis 1–3) e os grupos de parecidas
-- [ ] 2. Script de imagens + fonte; conferir tamanho do firmware
-- [ ] 3. Tela do jogo (rodada, acerto/erro, sons) — testar na placa
-- [ ] 4. Níveis, estrelas, NVS, 4º botão na tela inicial — testar na placa
-- [ ] 5. Docs (README, PROJECT_CONTEXT, LESSONS) + commit + release
+- [x] 1. Usuário revisa a lista de palavras (níveis 1–3) e os grupos de parecidas
+- [x] 2. Script de imagens + fonte; conferir tamanho do firmware
+- [ ] 3. Tela do jogo (rodada, acerto/erro, sons) — testar na placa (implementado; falta conferência do usuário)
+- [ ] 4. Níveis, estrelas, NVS, 4º botão na tela inicial — testar na placa (implementado; falta conferência do usuário)
+- [x] 5. Docs (README, PROJECT_CONTEXT, LESSONS) + commit + release (v1.4, 2026-10-24)
