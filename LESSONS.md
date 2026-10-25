@@ -123,3 +123,8 @@
 - **What happened**: a placa desligava em vez de acender ao tocar na tela apagada.
 - **Why**: `now = millis()` era lido antes do toque; o toque registrava um `millis()` maior, `now - lastActivity` ficava negativo e virava ~4 bilhões em uint32 (passava do limite de 10 min).
 - **Rule**: ler todas as fontes de evento antes de capturar `now`, ou comparar com `(int32_t)(a - b)`.
+
+## [2026-10-24] — Conferir a licença de assets gerados antes de publicar
+- **What happened**: a voz do Montar foi gerada com o `say` do macOS e publicada no repo público e na release v1.5 antes de conferir a licença das vozes do sistema.
+- **Why**: "já vem no Mac e não precisa instalar" foi tratado como "pode redistribuir". Imagens tiveram a licença conferida (Noto Emoji); a voz não.
+- **Rule**: todo asset de terceiros que vai para o repo ou para uma release (imagem, fonte, voz, música, inclusive gerado por ferramenta) tem a licença conferida na fonte oficial antes do commit, e é registrado em `licenses/`.

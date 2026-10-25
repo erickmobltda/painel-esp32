@@ -55,14 +55,15 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
   Músicas), token renovado em segundo plano. Item 3 (jogo ~30 FPS) pendente; item 4 removido pelo usuário.
 - **App Ler (pedido do usuário, 2026-10-22)**: palavra + 3 imagens, 3 níveis, sons de acerto/erro. Spec em
   `docs/specs/apps/ler.md`. Gravado na placa; conferência visual/sonora do usuário pendente.
-- **Wi-Fi com até 5 redes (pedido do usuário)**: casa e casa da sogra sem recadastrar. Compilado; ainda
-  não gravado nem testado na placa.
-- **Specs (2026-10-24)**: `docs/specs/` com o núcleo, cada app e a proposta *Monte a Palavra* (não implementada,
-  decisões D1–D9 pendentes; trazida de `erickmobltda/my_readmes`).
+- **Wi-Fi com até 5 redes (pedido do usuário)**: casa e casa da sogra sem recadastrar. Gravado (v1.4): conectou na
+  rede já salva; falta o teste trocando de casa.
+- **Specs (2026-10-24)**: `docs/specs/` com o núcleo, cada app e a spec *Monte a Palavra* (implementada depois como app Montar;
+  trazida de `erickmobltda/my_readmes`).
 - **v1.4 publicada (2026-10-24)** a pedido do usuário, com Ler e Wi-Fi ainda sem teste na placa. Gravada na placa: conectou na rede salva.
 - **App Montar / Monte a Palavra (2026-10-24)**: implementado conforme a spec + decisões/adaptações (ver o topo de
   `docs/specs/apps/monte-a-palavra.md` e `tasks/monte-a-palavra.md`). Núcleo testado no Mac; abre na placa (heap 111 KB).
-  Teste com a filha pendente. Firmware em 94% (158 KB livres): imagens repetidas entre Ler e Montar são candidatas a
+  Teste com a filha pendente. ⚠️ Pendente: confirmar se a licença do macOS permite publicar a voz do `say`
+  (repo e release públicos contêm o áudio); opções levadas ao usuário. Firmware em 94% (158 KB livres): imagens repetidas entre Ler e Montar são candidatas a
   economia. **v1.5 publicada** a pedido do usuário antes desse teste.
 
 ## Estrutura do sketch `sketches/painel`
@@ -125,7 +126,7 @@ Objetivo, regras e etapas completas: ver o briefing original (Spotify remote + J
 - Usuário: as animações da tela de título do jogo podem ser reduzidas se precisar de desempenho.
 
 ## App Músicas (decisões do usuário, v1.1) — `ui.cpp` (tela) + `spotify.cpp` (dados)
-- Tela inicial: **Músicas | Jogo / Pintar | Ler** (grade 2x2 desde a v1.4). A tela "Spotify" não tem mais botão (código em `spotifyEvent`, mantido).
+- Tela inicial: **Músicas | Jogo | Pintar / Ler | Montar** (3 em cima, 2 embaixo, desde a v1.5). A tela "Spotify" não tem mais botão (código em `spotifyEvent`, mantido).
 - Grade de 8 capas (4x2, 112 px) da playlist do usuário (`5BLKGFcPOFthBIkYROwHLK`, 37 músicas/28 álbuns em 2026-10-20);
   barra ⌂ ◀ ⏯ ▶. Tocar numa capa = `PUT /me/player/play` com `context_uri` da playlist + `offset.uri` da música
   (toca e segue a playlist). Sem aparelho ativo (404) → `GET /devices` → prefere tipo "Speaker" (Alexa), senão o 1º;
